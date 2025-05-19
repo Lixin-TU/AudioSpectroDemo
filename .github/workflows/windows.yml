@@ -15,7 +15,7 @@ jobs:
     - name: Install dependencies
       run: |
         python -m pip install --upgrade pip
-        pip install pyinstaller pyside6 pyqtgraph librosa soundfile numpy pywinsparkle pyinstaller-hooks-contrib
+        pip install pyinstaller pyside6 pyqtgraph librosa soundfile numpy pyinstaller-hooks-contrib
 
     - name: Download WinSparkle DLL
       run: |
