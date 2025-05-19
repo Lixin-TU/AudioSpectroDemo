@@ -3,3 +3,4 @@ pyqtgraph
 librosa
 soundfile
 numpy
+pywinsparkle
