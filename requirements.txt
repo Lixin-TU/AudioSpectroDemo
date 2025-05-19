@@ -3,4 +3,3 @@ pyqtgraph
 librosa
 soundfile
 numpy
-pywinsparkle ; platform_system == "Windows"
