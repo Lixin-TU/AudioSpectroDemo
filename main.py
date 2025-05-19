@@ -31,7 +31,7 @@ if platform.system() == "Windows":
         dll_path = pathlib.Path(sys.executable).with_name("winsparkle.dll")
         _ws = ctypes.WinDLL(str(dll_path))
         _ws.win_sparkle_set_appcast_url.argtypes = [ctypes.c_wchar_p]
-        _ws.win_sparkle_set_appcast_url("https://example.com/appcast.xml")
+        _ws.win_sparkle_set_appcast_url("https://Lixin-TU.github.io/AudioSpectroDemo/appcast.xml")
         _ws.win_sparkle_init()
         _ws.win_sparkle_check_update_without_ui()
     except OSError:
