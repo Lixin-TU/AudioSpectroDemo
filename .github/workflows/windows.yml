@@ -18,11 +18,9 @@ jobs:
         pip install pyinstaller pyside6 pyqtgraph librosa soundfile numpy pyinstaller-hooks-contrib
 
     - name: Download WinSparkle DLL
-      shell: pwsh
+      shell: bash
       run: |
-        Invoke-WebRequest `
-          -Uri "https://github.com/vslavik/winsparkle/releases/latest/download/WinSparkle.dll" `
-          -OutFile "winsparkle.dll"
+        curl -L -o winsparkle.dll "https://github.com/vslavik/winsparkle/releases/latest/download/WinSparkle.dll"
 
     - name: Freeze app
       run: |
