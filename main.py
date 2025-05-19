@@ -1,4 +1,15 @@
+import ctypes
+# suppress Windows loader error dialogs (Bad Image, missing DLL pop-ups) on Windows only
+import platform
+if platform.system() == "Windows":
+    SEM_FAILCRITICALERRORS   = 0x0001
+    SEM_NOGPFAULTERRORBOX    = 0x0002
+    SEM_NOOPENFILEERRORBOX   = 0x8000
+    ctypes.windll.kernel32.SetErrorMode(
+        SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX
+    )
 import sys
+import time
 import os
 import numpy as np
 import librosa
@@ -6,6 +17,7 @@ from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
     QFileDialog,
+    QProgressDialog,
 )
 from PySide6.QtCore import Qt
 import pyqtgraph as pg
@@ -62,11 +74,17 @@ class Main(QMainWindow):
 
         self.setWindowTitle(os.path.basename(file_path))
 
-        QApplication.setOverrideCursor(Qt.WaitCursor)
+        progress = QProgressDialog("Processing audio...", None, 0, 0, self)
+        progress.setWindowModality(Qt.WindowModal)
+        progress.setCancelButton(None)
+        progress.setMinimumDuration(0)
+        progress.show()
+        QApplication.processEvents()
         try:
+            time.sleep(2)
             img = wav_to_mel_image(file_path)  # numpy uint8 0-255
         finally:
-            QApplication.restoreOverrideCursor()
+            progress.close()
 
         mel_min = librosa.hz_to_mel(0)             # include DC
         mel_max = librosa.hz_to_mel(MAX_FREQ)
