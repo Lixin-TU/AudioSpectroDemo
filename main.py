@@ -12,17 +12,13 @@ import pyqtgraph as pg
 from pyqtgraph import PlotWidget, ImageItem
 from pyqtgraph.exporters import ImageExporter
 
-# ── Windows-only auto-update ───────────────────────────────────────────────
-import ctypes, platform
+# ── Windows-only auto-update (via *pywinsparkle*) ─────────────────────────
+import platform
 if platform.system() == "Windows":
-    _ws = ctypes.WinDLL(os.path.join(os.path.dirname(sys.executable),
-                                     "winsparkle.dll"))
-    _ws.win_sparkle_set_appcast_url.restype = None
-    _ws.win_sparkle_set_appcast_url.argtypes = [ctypes.c_wchar_p]
-    _ws.win_sparkle_set_appcast_url("https://example.com/appcast.xml")
-    _ws.win_sparkle_init()
-    _ws.win_sparkle_check_update_without_ui()
-# ───────────────────────────────────────────────────────────────────────────
+    import pywinsparkle
+    pywinsparkle.win_sparkle_set_appcast_url("https://example.com/appcast.xml")
+    pywinsparkle.win_sparkle_init()
+    pywinsparkle.win_sparkle_check_update_without_ui()
 # ───────────────────────────────────────────────────────────────────────────
 
 from dsp.mel import (
@@ -144,5 +140,5 @@ if __name__ == "__main__":
     window = Main()
     window.show()
     if platform.system() == "Windows":
-        _ws.win_sparkle_cleanup()
+        pywinsparkle.win_sparkle_cleanup()
     sys.exit(app.exec())
