@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="utf-8"?>
+<rss version="2.0"
+     xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+  <channel>
+    <title>AudioSpectroDemo Updates</title>
+
+    <item>
+      <title>Version 0.1.0</title>
+      <enclosure
+        url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.1.0/AudioSpectroDemo-0.1.0.zip"
+        sparkle:version="0.1.0"
+        sparkle:shortVersionString="0.1.0"
+        length="12345678"
+        type="application/octet-stream"/>
+    </item>
+
+    <!-- Later releases go here -->
+  </channel>
+</rss>
