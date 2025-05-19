@@ -12,13 +12,19 @@ import pyqtgraph as pg
 from pyqtgraph import PlotWidget, ImageItem
 from pyqtgraph.exporters import ImageExporter
 
-# ── Windows-only auto-update (via *pywinsparkle*) ─────────────────────────
-import platform
+# ── Windows‑only auto‑update (ctypes + WinSparkle DLL) ───────────────────
+import ctypes, platform, pathlib, sys
 if platform.system() == "Windows":
-    import pywinsparkle
-    pywinsparkle.win_sparkle_set_appcast_url("https://example.com/appcast.xml")
-    pywinsparkle.win_sparkle_init()
-    pywinsparkle.win_sparkle_check_update_without_ui()
+    try:
+        dll_path = pathlib.Path(sys.executable).with_name("winsparkle.dll")
+        _ws = ctypes.WinDLL(str(dll_path))
+        _ws.win_sparkle_set_appcast_url.argtypes = [ctypes.c_wchar_p]
+        _ws.win_sparkle_set_appcast_url("https://example.com/appcast.xml")
+        _ws.win_sparkle_init()
+        _ws.win_sparkle_check_update_without_ui()
+    except OSError:
+        # DLL missing or wrong arch – skip updater but keep app running
+        _ws = None
 # ───────────────────────────────────────────────────────────────────────────
 
 from dsp.mel import (
@@ -139,6 +145,6 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     window = Main()
     window.show()
-    if platform.system() == "Windows":
-        pywinsparkle.win_sparkle_cleanup()
+    if platform.system() == "Windows" and _ws:
+        _ws.win_sparkle_cleanup()
     sys.exit(app.exec())
