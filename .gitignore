@@ -1,0 +1,20 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+
+# Packaging / build
+build/
+dist/
+*.spec
+
+# Environments / IDE
+.venv/
+.vscode/
+.idea/
+# Jupyter Notebook
+.ipynb_checkpoints
+.ipynb
+
+# folder
+test_audio/
