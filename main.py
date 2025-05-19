@@ -36,6 +36,8 @@ if platform.system() == "Windows":
         _ws = ctypes.WinDLL(str(dll_path))
         _ws.win_sparkle_set_appcast_url.argtypes = [ctypes.c_wchar_p]
         _ws.win_sparkle_set_appcast_url("https://Lixin-TU.github.io/AudioSpectroDemo/appcast.xml")
+        _ws.win_sparkle_set_app_details.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_wchar_p]
+        _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.0")
         _ws.win_sparkle_init()
         _ws.win_sparkle_check_update_without_ui()
     except OSError:
