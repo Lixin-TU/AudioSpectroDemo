@@ -1,18 +1,12 @@
-import ctypes
-# suppress Windows loader error dialogs (Bad Image, missing DLL pop-ups) on Windows only
-import platform
-if platform.system() == "Windows":
-    SEM_FAILCRITICALERRORS   = 0x0001
-    SEM_NOGPFAULTERRORBOX    = 0x0002
-    SEM_NOOPENFILEERRORBOX   = 0x8000
-    ctypes.windll.kernel32.SetErrorMode(
-        SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX
-    )
 import sys
 import time
 import os
+import platform
+import pathlib
+import ctypes
 import numpy as np
 import librosa
+
 from PySide6.QtWidgets import (
     QApplication,
     QMainWindow,
@@ -26,10 +20,17 @@ from PySide6.QtWidgets import (
 from PySide6.QtCore import Qt
 import pyqtgraph as pg
 from pyqtgraph import PlotWidget, ImageItem
-from pyqtgraph.exporters import ImageExporter
+
+# suppress Windows loader error dialogs (Bad Image, missing DLL pop-ups) on Windows only
+if platform.system() == "Windows":
+    SEM_FAILCRITICALERRORS   = 0x0001
+    SEM_NOGPFAULTERRORBOX    = 0x0002
+    SEM_NOOPENFILEERRORBOX   = 0x8000
+    ctypes.windll.kernel32.SetErrorMode(
+        SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX
+    )
 
 # ── Windows‑only auto‑update (ctypes + WinSparkle DLL) ───────────────────
-import ctypes, platform, pathlib, sys
 if platform.system() == "Windows":
     try:
         dll_path = pathlib.Path(sys.executable).with_name("winsparkle.dll")
@@ -37,7 +38,7 @@ if platform.system() == "Windows":
         _ws.win_sparkle_set_appcast_url.argtypes = [ctypes.c_wchar_p]
         _ws.win_sparkle_set_appcast_url("https://Lixin-TU.github.io/AudioSpectroDemo/appcast.xml")
         _ws.win_sparkle_set_app_details.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_wchar_p]
-        _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.0")
+        _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.1")
         _ws.win_sparkle_init()
         _ws.win_sparkle_check_update_without_ui()
     except OSError:
@@ -61,11 +62,6 @@ class Main(QMainWindow):
         super().__init__()
         self.setWindowTitle("AudioSpectroDemo")
         self.resize(900, 600)
-
-        # File → Export PNG
-        file_menu = self.menuBar().addMenu("File")
-        export_act = file_menu.addAction("Export PNG…")
-        export_act.triggered.connect(self.export_png)
 
         self.open_wav()
 
@@ -171,27 +167,6 @@ class Main(QMainWindow):
 
         dialog.resize(EXPORT_W, EXPORT_H)
         dialog.exec()
-
-    # ── Export PNG at fixed size ────────────────────────────────────────
-    def export_png(self):
-        """
-        Export the currently displayed spectrogram as a PNG
-        with fixed pixel dimensions defined by EXPORT_W / EXPORT_H.
-        """
-        if not hasattr(self, "view"):
-            return
-        save_path, _ = QFileDialog.getSaveFileName(
-            self,
-            "Export Spectrogram",
-            filter="PNG (*.png)",
-        )
-        if not save_path:
-            return
-
-        exporter = ImageExporter(self.view.plotItem)
-        exporter.params["width"] = EXPORT_W
-        exporter.params["height"] = EXPORT_H
-        exporter.export(save_path)
 
 
 if __name__ == "__main__":
