@@ -5,7 +5,6 @@ import platform
 import pathlib
 import ctypes
 import numpy as np
-import imageio.v2 as imageio
 import matplotlib.pyplot as plt
 import librosa
 import threading
@@ -14,6 +13,7 @@ import urllib.request
 import subprocess
 import tempfile
 from datetime import datetime
+import shutil
 
 from PySide6.QtWidgets import (
     QApplication,
@@ -95,7 +95,7 @@ def parse_appcast_xml(url):
 def check_for_updates_async():
     """Check for updates in a separate thread"""
     try:
-        current_version = "0.2.8"
+        current_version = "0.2.9"
         appcast_url = "https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml"
 
         update_info = parse_appcast_xml(appcast_url)
@@ -133,6 +133,7 @@ class Main(QMainWindow):
         super().__init__()
         self.setWindowTitle("AudioSpectroDemo")
         self._session_temp_files: list[str] = []
+        self._session_temp_dirs: list[str] = []
         self.resize(900, 600)
 
         self._init_winsparkle()
@@ -196,7 +197,7 @@ class Main(QMainWindow):
             _ws.win_sparkle_set_log_path.argtypes = [ctypes.c_wchar_p]
 
             _ws.win_sparkle_set_appcast_url("https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml")
-            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.8")
+            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.9")
             _ws.win_sparkle_set_verbosity_level(2)
             _ws.win_sparkle_set_log_path(WINSPARKLE_LOG_PATH)
             _ws.win_sparkle_init()
@@ -328,6 +329,8 @@ del "%~f0"
                 hop = 512
                 export_dir = os.path.join(os.path.dirname(wav_path), "spectrograms")
                 os.makedirs(export_dir, exist_ok=True)
+                if export_dir not in self._session_temp_dirs:
+                    self._session_temp_dirs.append(export_dir)
                 duration_min = rgb.shape[1] * hop / TARGET_SR / 60.0
 
                 fig = plt.figure(figsize=(EXPORT_W/300, EXPORT_H/300), dpi=300)
@@ -405,6 +408,11 @@ del "%~f0"
         for p in self._session_temp_files:
             try: os.remove(p)
             except: pass
+        for d in self._session_temp_dirs:
+            try:
+                shutil.rmtree(d, ignore_errors=True)
+            except:
+                pass
         super().closeEvent(event)
 
 if __name__ == "__main__":
