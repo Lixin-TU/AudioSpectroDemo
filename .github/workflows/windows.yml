@@ -39,12 +39,16 @@ jobs:
             matplotlib \
             imageio
 
-      # 4. Copy the WinSparkle.dll that you committed to the repo into the root so PyInstaller can bundle it.
-      #    ➡️  Update the path below if you store the DLL somewhere else.
-      - name: Copy WinSparkle DLL into build context
+      # 4. Ensure the WinSparkle DLL is in the build context so PyInstaller can bundle it.
+      #    ➡️  If you store the DLL somewhere else, update the source path in the cp command.
+      - name: Ensure WinSparkle DLL
         shell: bash
         run: |
-          cp WinSparkle.dll ./WinSparkle.dll
+          if [ ! -f WinSparkle.dll ]; then
+            cp tools/WinSparkle.dll ./WinSparkle.dll
+          else
+            echo "WinSparkle.dll already present, skipping copy."
+          fi
 
       # 5. Build a single‑file EXE.  "--add-data \"WinSparkle.dll;.\"" tells PyInstaller to embed the DLL
       #    and drop it next to AudioSpectroDemo.exe at runtime.
