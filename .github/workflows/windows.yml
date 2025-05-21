@@ -44,7 +44,7 @@ jobs:
       - name: Copy WinSparkle DLL into build context
         shell: bash
         run: |
-          cp tools/WinSparkle/WinSparkle.dll ./WinSparkle.dll
+          cp WinSparkle.dll ./WinSparkle.dll
 
       # 5. Build a single‑file EXE.  "--add-data \"WinSparkle.dll;.\"" tells PyInstaller to embed the DLL
       #    and drop it next to AudioSpectroDemo.exe at runtime.
