@@ -43,7 +43,10 @@ if platform.system() == "Windows":
         _ws.win_sparkle_set_appcast_url.argtypes = [ctypes.c_wchar_p]
         _ws.win_sparkle_set_appcast_url("https://github.com/Lixin-TU/AudioSpectroDemo/blob/main/appcast.xml")
         _ws.win_sparkle_set_app_details.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_wchar_p]
-        _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.5")
+        _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.6")
+        # Verbose logging (0=errors, 1=info, 2=debug)
+        _ws.win_sparkle_set_verbosity_level.argtypes = [ctypes.c_int]
+        _ws.win_sparkle_set_verbosity_level(2)
         _ws.win_sparkle_init()
         _ws.win_sparkle_check_update_without_ui()
     except OSError:
@@ -96,9 +99,10 @@ class Main(QMainWindow):
         layout = QVBoxLayout(central)
 
         # App info banner
-        self.info_label = QLabel("UBCO‑ISDPRL  •  AudioSpectroDemo v0.2.5")
+        self.info_label = QLabel("UBCO‑ISDPRL  •  AudioSpectroDemo v0.2.6")
         self.info_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.info_label)
+        self.info_label.setText(self.info_label.text() + "  •  Updater=DEBUG")
 
         self.open_btn = QPushButton("Open WAV files")
         self.export_checkbox = QCheckBox("Export spectrograms")  # default: unchecked
