@@ -13,33 +13,56 @@ jobs:
     runs-on: windows-latest
 
     steps:
+      # 1. Grab the source code
       - name: Check out code
         uses: actions/checkout@v4
 
+      # 2. Set up the exact Python version your app targets
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
 
+      # 3. Install every runtime dependency that main.py imports (and sub‑deps like soundfile for librosa)
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install pyinstaller pyside6 pyqtgraph librosa soundfile numpy pyinstaller-hooks-contrib matplotlib imageio
+          pip install \
+            pyinstaller \
+            pyside6 \
+            pyqtgraph \
+            librosa \
+            soundfile \
+            numpy \
+            pyinstaller-hooks-contrib \
+            matplotlib \
+            imageio
 
-      - name: Download WinSparkle DLL
+      # 4. Copy the WinSparkle.dll that you committed to the repo into the root so PyInstaller can bundle it.
+      #    ➡️  Update the path below if you store the DLL somewhere else.
+      - name: Copy WinSparkle DLL into build context
         shell: bash
         run: |
-          curl -L -o winsparkle.dll \
-            https://github.com/vslavik/winsparkle/releases/latest/download/WinSparkle.dll
+          cp tools/WinSparkle/WinSparkle.dll ./WinSparkle.dll
 
+      # 5. Build a single‑file EXE.  "--add-data \"WinSparkle.dll;.\"" tells PyInstaller to embed the DLL
+      #    and drop it next to AudioSpectroDemo.exe at runtime.
       - name: Build Windows EXE
         shell: bash
         run: |
           pyinstaller --noconfirm --noconsole --onefile main.py \
                       --name AudioSpectroDemo \
-                      --add-data "winsparkle.dll;." \
+                      --add-data "WinSparkle.dll;." \
                       --hidden-import imageio
 
+      # 6. Stash the build output so you can download it from the workflow run if the release‑creation step fails.
+      - name: Archive build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-build
+          path: dist/AudioSpectroDemo.exe
+
+      # 7. Create / update the GitHub Release tagged by the push.
       - name: Create GitHub Release
         id: make_release
         uses: actions/create-release@v1
@@ -51,6 +74,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      # 8. Attach the freshly‑built EXE to the release page.
       - name: Upload EXE to Release
         uses: actions/upload-release-asset@v1
         with:
