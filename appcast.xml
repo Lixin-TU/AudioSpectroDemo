@@ -2,6 +2,7 @@
 <rss version="2.0"
      xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
   <channel>
+    <title>AudioSpectroDemo Updates</title>
     <item>
       <title>Version 0.2.4</title>
       <enclosure
@@ -21,7 +22,6 @@
         length="146102422"
         type="application/octet-stream"/>
     </item>
-    <title>AudioSpectroDemo Updates</title>
 
     <item>
       <title>Version 0.2.2</title>

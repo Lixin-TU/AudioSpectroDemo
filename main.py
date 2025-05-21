@@ -43,7 +43,7 @@ if platform.system() == "Windows":
         _ws.win_sparkle_set_appcast_url.argtypes = [ctypes.c_wchar_p]
         _ws.win_sparkle_set_appcast_url("https://github.com/Lixin-TU/AudioSpectroDemo/blob/main/appcast.xml")
         _ws.win_sparkle_set_app_details.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_wchar_p]
-        _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.4")
+        _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.5")
         _ws.win_sparkle_init()
         _ws.win_sparkle_check_update_without_ui()
     except OSError:
@@ -77,8 +77,12 @@ COLMAP_COLORS = [
 # Smooth 256‑step plasma lookup table for better visualisation
 LUT = (plt.get_cmap("plasma")(np.linspace(0, 1, 256))[:, :3] * 255).astype(np.uint8)
 
-EXPORT_W = 800   # pixels
-EXPORT_H = 500    # pixels
+def _hz_to_k_label(hz: int) -> str:
+    return "0" if hz == 0 else f"{int(round(hz / 1000))}"
+
+# ── PNG/export dimensions ───────────────────────────────────────────────
+EXPORT_W = 800    # pixels width
+EXPORT_H = 400    # pixels height
 
 
 class Main(QMainWindow):
@@ -92,7 +96,7 @@ class Main(QMainWindow):
         layout = QVBoxLayout(central)
 
         # App info banner
-        self.info_label = QLabel("UBCO‑ISDPRL  •  AudioSpectroDemo v0.2.4")
+        self.info_label = QLabel("UBCO‑ISDPRL  •  AudioSpectroDemo v0.2.5")
         self.info_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.info_label)
 
@@ -145,7 +149,7 @@ class Main(QMainWindow):
                 rgb_img = lut[indices]  # (H, W, 3)
 
                 # Build axes extents
-                hop = 1024
+                hop = 512
                 # Save PNGs in a sibling folder called “spectrograms”
                 export_dir = os.path.join(os.path.dirname(wav_path), "spectrograms")
                 os.makedirs(export_dir, exist_ok=True)
@@ -153,25 +157,49 @@ class Main(QMainWindow):
                 duration_min = rgb_img.shape[1] * hop / TARGET_SR / 60.0
 
                 # Plot with axes & title
-                fig = plt.figure(figsize=(EXPORT_W / 100, EXPORT_H / 100), dpi=100)
+                # Fixed export canvas
+                fig = plt.figure(figsize=(EXPORT_W / 300, EXPORT_H / 300), dpi=300)
                 ax = fig.add_subplot(111)
+                # Reduce default margins so the image fills more of the canvas
+                fig.subplots_adjust(left=0.08, right=0.98, top=0.92, bottom=0.12)
                 ax.imshow(
                     np.flipud(rgb_img),
                     aspect='auto',
                     extent=[0, duration_min, 0, MAX_FREQ],
                     origin='lower'
                 )
-                ax.set_xlabel("Time (min)")
-                ax.set_ylabel("Frequency (Hz)")
-                ax.set_yticks([100, 500, 1000, 2000, 3000, 5000, 7000, 10000, 16000])
+                ax.set_xlabel("Time (min)", fontsize=3)
+                ax.set_ylabel("Frequency (kHz)", fontsize=3)
+                major_freqs = [0, 2000, 4000, 6000, 8000, 10000, 12000, 14000, 16000]
+                ax.set_yticks(major_freqs)
+                ax.set_yticklabels([_hz_to_k_label(f) for f in major_freqs], fontsize=3)
                 ax.set_ylim(0, MAX_FREQ)
-                ax.set_title(os.path.basename(wav_path))
-                fig.tight_layout()
+                # Thin, inward‑facing light‑grey ticks
+                ax.tick_params(
+                    axis="both",
+                    which="both",
+                    direction="in",
+                    color="0.6",     # light gray
+                    width=0.4,
+                    length=3,
+                    labelsize=3,
+                )
+                for spine in ax.spines.values():
+                    spine.set_linewidth(0.4)
+                    spine.set_color("0.6")
+                # ax.tick_params(axis="x", labelsize=3)  # replaced by above
+                ax.title.set_fontsize(5)
+                ax.set_title(os.path.basename(wav_path), fontsize=5, pad=4)
                 png_path = os.path.join(
                     export_dir,
                     os.path.splitext(os.path.basename(wav_path))[0] + ".png"
                 )
-                fig.savefig(png_path, dpi=100)
+                fig.savefig(
+                    png_path,
+                    dpi=300,
+                    bbox_inches="tight",
+                    pad_inches=0.01,
+                )
                 plt.close(fig)
         progress.close()
 
@@ -192,17 +220,22 @@ class Main(QMainWindow):
         btn_layout.addWidget(next_btn)
         main_layout.addLayout(btn_layout)
 
-        # Gain (0–40 dB) slider + readout
+        # Gain (0–40 dB) slider + readout (default 0 dB)
         gain_layout = QHBoxLayout()
         gain_label_prefix = QLabel("Color gain (dB):")
         gain_slider = QSlider(Qt.Horizontal)
-        gain_slider.setRange(0, 40)
-        gain_slider.setValue(0)
+        gain_slider.setRange(0, 40)        # 0 – 40 dB range as requested
+        gain_slider.setValue(0)            # default 0 dB
         gain_value = QLabel("0 dB")
         gain_layout.addWidget(gain_label_prefix)
         gain_layout.addWidget(gain_slider, 1)
         gain_layout.addWidget(gain_value)
         main_layout.addLayout(gain_layout)
+
+        small_font = self.font()
+        small_font.setPointSizeF(small_font.pointSizeF() * 0.85)
+        gain_label_prefix.setFont(small_font)
+        gain_value.setFont(small_font)
 
         from PySide6.QtGui import QTransform
 
@@ -212,38 +245,41 @@ class Main(QMainWindow):
             pw.clear()
             file_path, img = spectrograms[idx]
             gain_db = gain_slider.value()
-            img_disp = img + gain_db
+            # map uint8→float, apply gain as 10^(dB/20), then re‑quantise
+            img_float = img.astype(np.float32) / 255.0
+            factor = 10 ** (gain_db / 20.0)
+            img_float = np.clip(img_float * factor, 0.0, 1.0)
+            img_disp = (img_float * 255.0).astype(np.uint8)
             dialog.setWindowTitle(os.path.basename(file_path))
 
-            n_bins = img.shape[0]
-            # 6 evenly spaced mel ticks between 0 and MEL_MAX
-            y_ticks = []
-            for j in range(6):
-                idx_tick = int(j * (n_bins - 1) / 5)
-                mel_val = int(idx_tick * MEL_MAX / (n_bins - 1))
-                y_ticks.append((idx_tick, str(mel_val)))
+            freqs = [0, 2000, 4000, 6000, 8000, 10000, 12000, 14000, 16000]
+            y_ticks = [(f, _hz_to_k_label(f)) for f in freqs]
+            n_bins = img.shape[0]  # keep for scale calc below
 
-            hop = 1024
+            hop = 512
             scale_x = hop / TARGET_SR / 60
 
             pw.setLabel("bottom", "Time", units="min")
-            pw.setLabel("left", "Mel frequency", units="Hz")
+            pw.setLabel("left", "Frequency", units="Hz")
             pw.getAxis("left").setTicks([y_ticks])
 
             img_item = ImageItem(img_disp)
-            lut = LUT
-            img_item.setLookupTable(lut, update=True)
-            img_item.setOpts(axisOrder="row-major")
-            img_item.setTransform(QTransform().scale(scale_x, MEL_MAX / img.shape[0]))
-            img_item.setPos(0, 0)
+            img_item.setLookupTable(LUT, update=True)
+            img_item.setOpts(axisOrder="row-major")          # no invert
+            # Scale X (time) and Y (frequency) axes; flip Y by using a negative scale
+            img_item.setTransform(
+                QTransform().scale(scale_x, -MAX_FREQ / (n_bins - 1))
+            )
+            # After negative scale, shift the image up so 0 Hz is at the bottom
+            img_item.setPos(0, MAX_FREQ)
             pw.addItem(img_item)
-            pw.setLimits(yMin=0, yMax=MEL_MAX)
+            pw.setLimits(yMin=0, yMax=MAX_FREQ)
 
             prev_btn.setEnabled(idx > 0)
             next_btn.setEnabled(idx < len(spectrograms) - 1)
 
         def on_gain_change(v):
-            gain_value.setText(f"{v} dB")
+            gain_value.setText(f"{int(v)} dB")
             update_view(index)
         gain_slider.valueChanged.connect(on_gain_change)
 
@@ -259,7 +295,7 @@ class Main(QMainWindow):
         # Initialize view
         update_view(index)
 
-        dialog.resize(EXPORT_W, EXPORT_H)
+        dialog.resize(EXPORT_W, EXPORT_H + 120)  # keep extra space for buttons
         dialog.exec()
 
 
