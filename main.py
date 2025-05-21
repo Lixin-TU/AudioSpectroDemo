@@ -39,19 +39,27 @@ if platform.system() == "Windows":
 if platform.system() == "Windows":
     try:
         dll_path = pathlib.Path(sys.executable).with_name("winsparkle.dll")
+        log_path = pathlib.Path(sys.executable).with_suffix(".winsparkle.log")
         _ws = ctypes.WinDLL(str(dll_path))
         _ws.win_sparkle_set_appcast_url.argtypes = [ctypes.c_wchar_p]
         _ws.win_sparkle_set_appcast_url("https://github.com/Lixin-TU/AudioSpectroDemo/blob/main/appcast.xml")
         _ws.win_sparkle_set_app_details.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_wchar_p]
-        _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.6")
+        _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.7")
         # Verbose logging (0=errors, 1=info, 2=debug)
         _ws.win_sparkle_set_verbosity_level.argtypes = [ctypes.c_int]
         _ws.win_sparkle_set_verbosity_level(2)
+        # Write WinSparkle messages to a file in the same folder
+        _ws.win_sparkle_set_log_path.argtypes = [ctypes.c_wchar_p]
+        _ws.win_sparkle_set_log_path(str(log_path))
+        # Expose to the Main window later
+        WINSPARKLE_LOG_PATH = str(log_path)
         _ws.win_sparkle_init()
         _ws.win_sparkle_check_update_without_ui()
     except OSError:
         # DLL missing or wrong arch – skip updater but keep app running
         _ws = None
+else:
+    WINSPARKLE_LOG_PATH = None
 # ───────────────────────────────────────────────────────────────────────────
 
 from dsp.mel import (
@@ -99,10 +107,21 @@ class Main(QMainWindow):
         layout = QVBoxLayout(central)
 
         # App info banner
-        self.info_label = QLabel("UBCO‑ISDPRL  •  AudioSpectroDemo v0.2.6")
+        self.info_label = QLabel("UBCO‑ISDPRL  •  AudioSpectroDemo v0.2.7")
         self.info_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.info_label)
-        self.info_label.setText(self.info_label.text() + "  •  Updater=DEBUG")
+
+        # Show latest WinSparkle log line (if any) after 1 s
+        if WINSPARKLE_LOG_PATH:
+            from PySide6.QtCore import QTimer
+            def _show_log():
+                try:
+                    with open(WINSPARKLE_LOG_PATH, "r", encoding="utf-8") as f:
+                        last = f.readlines()[-1].strip()
+                    self.info_label.setText(self.info_label.text() + "  •  " + last)
+                except Exception:
+                    pass
+            QTimer.singleShot(1000, _show_log)
 
         self.open_btn = QPushButton("Open WAV files")
         self.export_checkbox = QCheckBox("Export spectrograms")  # default: unchecked
