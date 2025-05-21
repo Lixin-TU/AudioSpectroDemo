@@ -4,6 +4,16 @@
   <channel>
     <title>AudioSpectroDemo Updates</title>
     <item>
+      <title>Version 0.2.7</title>
+      <enclosure
+        url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.2.7/AudioSpectroDemo-v0.2.7.exe"
+        sparkle:version="0.2.7"
+        sparkle:shortVersionString="0.2.7"
+        type="application/octet-stream"/>
+    </item>
+
+
+    <item>
       <title>Version 0.2.6</title>
       <enclosure
         url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.2.6/AudioSpectroDemo-v0.2.6.exe"
@@ -21,59 +31,6 @@
         type="application/octet-stream"/>
     </item>
 
-    <item>
-      <title>Version 0.2.4</title>
-      <enclosure
-        url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.2.4/AudioSpectroDemo-v0.2.4.exe"
-        sparkle:version="0.2.4"
-        sparkle:shortVersionString="0.2.4"
-        type="application/octet-stream"/>
-    </item>
-    
-    <item>
-      <title>Version 0.2.3</title>
-      <enclosure
-        url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.2.3/AudioSpectroDemo-v0.2.3.exe"
-        sparkle:version="0.2.3"
-        sparkle:shortVersionString="0.2.3"
-        type="application/octet-stream"/>
-    </item>
-
-    <item>
-      <title>Version 0.2.2</title>
-      <enclosure
-        url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.2.2/AudioSpectroDemo-v0.2.2.exe"
-        sparkle:version="0.2.2"
-        sparkle:shortVersionString="0.2.2"
-        type="application/octet-stream"/>
-    </item>
-
-    <item>
-      <title>Version 0.2.1</title>
-      <enclosure
-        url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.2.1/AudioSpectroDemo-v0.2.1.exe"
-        sparkle:version="0.2.1"
-        sparkle:shortVersionString="0.2.1"
-        type="application/octet-stream"/>
-    </item>
-
-    <item>
-      <title>Version 0.2.0</title>
-      <enclosure
-        url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.2.0/AudioSpectroDemo-v0.2.0.exe"
-        sparkle:version="0.2.0"
-        sparkle:shortVersionString="0.2.0"
-        type="application/octet-stream"/>
-    </item>
-
-    <item>
-      <title>Version 0.1.0</title>
-      <enclosure
-        url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.1.0/AudioSpectroDemo-0.1.0.exe"
-        sparkle:version="0.1.0"
-        sparkle:shortVersionString="0.1.0"
-        type="application/octet-stream"/>
-    </item>
 
   </channel>
 </rss>
