@@ -59,7 +59,7 @@ jobs:
       - name: Build Windows EXE
         shell: bash
         run: |
-          pyinstaller --noconfirm --noconsole --onefile --strip main.py \
+          pyinstaller --noconfirm --noconsole --onefile --strip --upx-exclude "python*.dll" main.py \
                       --name AudioSpectroDemo \
                       --add-data "WinSparkle.dll;."
 
