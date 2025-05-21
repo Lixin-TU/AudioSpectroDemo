@@ -34,6 +34,15 @@
         type="application/octet-stream"/>
     </item>
 
+    <item>
+      <title>Version 0.2.2</title>
+      <enclosure
+        url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.2.2/AudioSpectroDemo-v0.2.2.exe"
+        sparkle:version="0.2.2"
+        sparkle:shortVersionString="0.2.2"
+        length="146102422"
+        type="application/octet-stream"/>
+    </item>
 
 
   </channel>

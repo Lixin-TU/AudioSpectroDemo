@@ -3,3 +3,5 @@ pyqtgraph
 librosa
 soundfile
 numpy
+matplotlib
+imageio
