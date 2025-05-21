@@ -26,6 +26,9 @@ from PySide6.QtCore import Qt
 import pyqtgraph as pg
 from pyqtgraph import PlotWidget, ImageItem
 
+# Default: no WinSparkle log until set on Windows
+WINSPARKLE_LOG_PATH = None
+
 # suppress Windows loader error dialogs (Bad Image, missing DLL pop-ups) on Windows only
 if platform.system() == "Windows":
     SEM_FAILCRITICALERRORS   = 0x0001
@@ -100,6 +103,11 @@ class Main(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("AudioSpectroDemo")
+        # Track files we create so we can clean them up on exit
+        self._session_temp_files: list[str] = []
+        # include WinSparkle log if present
+        if WINSPARKLE_LOG_PATH is not None:
+            self._session_temp_files.append(WINSPARKLE_LOG_PATH)
         self.resize(900, 600)
 
         # ── Main UI: button + optional export checkbox ──
@@ -112,7 +120,7 @@ class Main(QMainWindow):
         layout.addWidget(self.info_label)
 
         # Show latest WinSparkle log line (if any) after 1 s
-        if WINSPARKLE_LOG_PATH:
+        if WINSPARKLE_LOG_PATH is not None:
             from PySide6.QtCore import QTimer
             def _show_log():
                 try:
@@ -223,6 +231,8 @@ class Main(QMainWindow):
                     bbox_inches="tight",
                     pad_inches=0.01,
                 )
+                # remember for clean‑up
+                self._session_temp_files.append(png_path)
                 plt.close(fig)
         progress.close()
 
@@ -329,3 +339,12 @@ if __name__ == "__main__":
     if platform.system() == "Windows" and _ws:
         _ws.win_sparkle_cleanup()
     sys.exit(app.exec())
+    # ------------------------------------------------------------------
+    def closeEvent(self, event):
+        """Delete temporary files created in this session."""
+        for p in self._session_temp_files:
+            try:
+                os.remove(p)
+            except FileNotFoundError:
+                pass
+        super().closeEvent(event)
