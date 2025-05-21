@@ -9,7 +9,6 @@
         url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.2.5/AudioSpectroDemo-v0.2.5.exe"
         sparkle:version="0.2.5"
         sparkle:shortVersionString="0.2.5"
-        length="146102422"
         type="application/octet-stream"/>
     </item>
 
@@ -19,7 +18,6 @@
         url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.2.4/AudioSpectroDemo-v0.2.4.exe"
         sparkle:version="0.2.4"
         sparkle:shortVersionString="0.2.4"
-        length="146102422"
         type="application/octet-stream"/>
     </item>
     
@@ -29,7 +27,6 @@
         url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.2.3/AudioSpectroDemo-v0.2.3.exe"
         sparkle:version="0.2.3"
         sparkle:shortVersionString="0.2.3"
-        length="146102422"
         type="application/octet-stream"/>
     </item>
 
@@ -39,7 +36,6 @@
         url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.2.2/AudioSpectroDemo-v0.2.2.exe"
         sparkle:version="0.2.2"
         sparkle:shortVersionString="0.2.2"
-        length="146102422"
         type="application/octet-stream"/>
     </item>
 
@@ -49,7 +45,6 @@
         url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.2.1/AudioSpectroDemo-v0.2.1.exe"
         sparkle:version="0.2.1"
         sparkle:shortVersionString="0.2.1"
-        length="146102422"
         type="application/octet-stream"/>
     </item>
 
@@ -59,7 +54,6 @@
         url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.2.0/AudioSpectroDemo-v0.2.0.exe"
         sparkle:version="0.2.0"
         sparkle:shortVersionString="0.2.0"
-        length="146102422"
         type="application/octet-stream"/>
     </item>
 
@@ -69,7 +63,6 @@
         url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.1.0/AudioSpectroDemo-0.1.0.exe"
         sparkle:version="0.1.0"
         sparkle:shortVersionString="0.1.0"
-        length="12345678"
         type="application/octet-stream"/>
     </item>
 
