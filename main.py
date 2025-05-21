@@ -43,7 +43,7 @@ if platform.system() == "Windows":
         _ws.win_sparkle_set_appcast_url.argtypes = [ctypes.c_wchar_p]
         _ws.win_sparkle_set_appcast_url("https://github.com/Lixin-TU/AudioSpectroDemo/blob/main/appcast.xml")
         _ws.win_sparkle_set_app_details.argtypes = [ctypes.c_wchar_p, ctypes.c_wchar_p, ctypes.c_wchar_p]
-        _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.3")
+        _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.4")
         _ws.win_sparkle_init()
         _ws.win_sparkle_check_update_without_ui()
     except OSError:
@@ -92,7 +92,7 @@ class Main(QMainWindow):
         layout = QVBoxLayout(central)
 
         # App info banner
-        self.info_label = QLabel("UBCO‑ISDPRL  •  AudioSpectroDemo v0.2.3")
+        self.info_label = QLabel("UBCO‑ISDPRL  •  AudioSpectroDemo v0.2.4")
         self.info_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.info_label)
 
