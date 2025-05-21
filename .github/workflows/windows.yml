@@ -25,6 +25,7 @@ jobs:
 
       # 3. Install every runtime dependency that main.py imports (and sub‑deps like soundfile for librosa)
       - name: Install Python dependencies
+        shell: bash
         run: |
           python -m pip install --upgrade pip
           pip install \
