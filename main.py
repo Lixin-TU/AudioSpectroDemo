@@ -468,7 +468,20 @@ exit /b 0
             print(f"Current executable: {current_app_info['exe_path']}")
             
             # Create and launch update script
-            self._launch_update_process(new_exe_temp_path, current_app_info)
+            try:
+                self._launch_update_process(new_exe_temp_path, current_app_info)
+            except Exception as e:
+                import traceback
+                tb = traceback.format_exc()
+                print("UPDATE PROCESS LAUNCH ERROR:\n", tb)
+                QMessageBox.critical(self, "Update Launch Error", f"{e}\n\n{tb}")
+                # Also write error to Desktop for debugging
+                try:
+                    with open(os.path.join(os.path.expanduser("~"), "Desktop", "audiospectro_update_error.txt"), "w", encoding="utf-8") as f:
+                        f.write(tb)
+                except Exception as err:
+                    print("Error writing to desktop:", err)
+            # the above try/except block now calls _launch_update_process
             
         except Exception as e:
             progress.close()
