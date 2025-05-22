@@ -471,7 +471,7 @@ exit /b 0
         self._download_cancelled = False
         
         # Create a progress dialog with a more controlled cancel behavior
-        progress = QProgressDialog("Downloading update...", "Cancel", 0, 100, self)
+        progress = QProgressDialog("Initializing download...", "Cancel", 0, 100, self)
         progress.setWindowModality(Qt.WindowModal)
         progress.setAutoClose(True)
         progress.setValue(0)
@@ -483,160 +483,157 @@ exit /b 0
         # Only connect once to avoid duplicate signals
         progress.canceled.connect(self._on_download_cancelled)
 
+        # Reset any existing download path
+        self._current_download_path = new_exe_temp_path
+
         def _safely_close_progress():
             if hasattr(self, '_download_progress') and self._download_progress:
                 try:
                     # Block signals before closing to prevent unwanted cancel signals
-                    self._download_progress.blockSignals(True)
-                    self._download_progress.close()
-                    self._download_progress = None
-                    logging.debug("Progress dialog closed safely")
+                    if self._download_progress is not None:
+                        self._download_progress.blockSignals(True)
+                        self._download_progress.close()
+                        self._download_progress = None
+                        log_print("Progress dialog closed safely")
                 except Exception as e:
                     log_print(f"Error closing progress: {e}")
         
-        def _hook(count, block_size, total_size):
-            if self._download_cancelled:
-                raise Exception("Download cancelled by user")
-            if total_size > 0:
-                pct = int(count * block_size * 100 / total_size)
-                if hasattr(self, '_download_progress') and self._download_progress:
-                    self._download_progress.setValue(min(pct, 100))
-                    downloaded_mb = (count * block_size) / (1024*1024)
-                    total_mb = total_size / (1024*1024)
-                    self._download_progress.setLabelText(f"Downloading {new_exe_name}... {downloaded_mb:.1f}/{total_mb:.1f} MB")
-                QApplication.processEvents()
-
+        # Implement a direct download with better timeout handling
         try:
-            # Add headers to avoid potential blocking
-            req = urllib.request.Request(url)
-            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.18')
             log_print(f"Starting download from URL: {url}")
-
-            # Actually perform the download
-            urllib.request.urlretrieve(url, new_exe_temp_path, reporthook=_hook)
+            progress.setLabelText("Connecting to server...")
+            QApplication.processEvents()
+            
+            # Use a session with timeout
+            import socket
+            import urllib3
+            
+            # Set default socket timeout
+            default_timeout = socket.getdefaulttimeout()
+            socket.setdefaulttimeout(30)  # 30 second timeout
+            
+            http = urllib3.PoolManager(
+                timeout=urllib3.Timeout(connect=30.0, read=60.0),
+                retries=urllib3.Retry(3)
+            )
+            
+            # Try to get content length first with a HEAD request
+            try:
+                head_response = http.request('HEAD', url)
+                content_length = int(head_response.headers.get('Content-Length', 0))
+                log_print(f"Content length from HEAD: {content_length} bytes")
+            except Exception as e:
+                log_print(f"Error getting content length: {e}")
+                content_length = 0
+            
+            # Now start the actual download
+            progress.setLabelText("Starting download...")
+            QApplication.processEvents()
+            
+            response = http.request(
+                'GET',
+                url,
+                preload_content=False,  # Stream the response
+                headers={
+                    'User-Agent': 'AudioSpectroDemo/0.2.18'
+                }
+            )
+            
+            if response.status != 200:
+                raise Exception(f"HTTP error: {response.status} {response.reason}")
+            
+            # Get content length from the response if we couldn't get it before
+            if content_length == 0:
+                content_length = int(response.headers.get('Content-Length', 0))
+                log_print(f"Content length from GET: {content_length} bytes")
+            
+            # Initialize a counter for downloaded bytes
+            downloaded = 0
+            
+            # Open the output file
+            with open(new_exe_temp_path, 'wb') as out_file:
+                # Read the response in chunks and write to the output file
+                chunk_size = 8192
+                last_update_time = time.time()
+                
+                progress.setLabelText(f"Downloading {new_exe_name}...")
+                QApplication.processEvents()
+                
+                for chunk in response.stream(chunk_size):
+                    if self._download_cancelled:
+                        response.release_conn()
+                        raise Exception("Download cancelled by user")
+                    
+                    if chunk:
+                        out_file.write(chunk)
+                        downloaded += len(chunk)
+                        
+                        # Update progress every 0.5 seconds
+                        now = time.time()
+                        if now - last_update_time > 0.5:
+                            last_update_time = now
+                            if content_length > 0:
+                                percent = min(int((downloaded / content_length) * 100), 100)
+                                progress.setValue(percent)
+                                
+                                # Add download speed information
+                                downloaded_mb = downloaded / (1024*1024)
+                                total_mb = content_length / (1024*1024)
+                                progress.setLabelText(f"Downloading {new_exe_name}... {downloaded_mb:.1f}/{total_mb:.1f} MB")
+                            else:
+                                # If we don't know the total size, show bytes downloaded
+                                downloaded_mb = downloaded / (1024*1024)
+                                progress.setLabelText(f"Downloading {new_exe_name}... {downloaded_mb:.1f} MB")
+                            
+                            QApplication.processEvents()
+            
+            # Clean up the response
+            response.release_conn()
+            
+            # Reset socket timeout to default
+            socket.setdefaulttimeout(default_timeout)
+            
+            # Mark download as completed
+            self._download_completed = True
             log_print("Download completed successfully")
             
-            # Ensure progress dialog is closed - safely
+            # Now safely close the progress dialog
             _safely_close_progress()
             
             # Force UI update
             QApplication.processEvents()
             log_print("UI updated after download")
-
-            # Only proceed with update if download was not cancelled
-            if self._download_cancelled:
-                log_print("Download was cancelled, aborting update")
-                return
             
             # Additional safeguard: verify the download worked and file exists
-            if not os.path.exists(new_exe_temp_path) or os.path.getsize(new_exe_temp_path) == 0:
-                log_print("ERROR: Download file is missing or empty")
-                QMessageBox.critical(self, "Update Error", "Downloaded file is missing or empty.")
+            if not os.path.exists(new_exe_temp_path):
+                log_print("ERROR: Download file is missing")
+                QMessageBox.critical(self, "Update Error", "Downloaded file is missing.")
                 return
-
+                
             # Verify downloaded file
             file_size = os.path.getsize(new_exe_temp_path)
             log_print(f"Verifying download: file_size={file_size} bytes")
             if file_size == 0:
-                raise Exception("Downloaded file is empty")
+                log_print("Downloaded file is empty")
+                QMessageBox.critical(self, "Update Error", "Downloaded file is empty.")
+                return
             elif file_size < 1000000:  # Less than 1MB seems too small for this app
-                raise Exception(f"Downloaded file seems too small ({file_size} bytes)")
+                log_print(f"Downloaded file seems too small ({file_size} bytes)")
+                QMessageBox.critical(self, "Update Error", f"Downloaded file seems too small ({file_size} bytes).")
+                return
 
             # Debug output
             log_print(f"Download details:")
             log_print(f"  File: {new_exe_temp_path}")
             log_print(f"  Size: {file_size} bytes")
             log_print(f"  Target name: {new_exe_name}")
-
-            # If running from source (not frozen), we cannot auto‑replace the script.
-            if not current_app_info['is_frozen']:
-                log_print("Running from source - showing information dialog only")
-                QMessageBox.information(
-                    self,
-                    "Update downloaded",
-                    "The update was downloaded to:\n"
-                    f"{new_exe_temp_path}\n\n"
-                    "Because you're running the Python source in VS Code, "
-                    "the auto‑update step is skipped.\n"
-                    "Run the packaged EXE to enable one‑click updates."
-                )
-                return
-
-            log_print("DEBUG: About to show success message")
-            # Show success message with proper parent and modality
-            msg_box = QMessageBox(self)
-            msg_box.setWindowTitle("Update ready")
-            msg_box.setText("The new version has been downloaded.\nAudioSpectroDemo will now restart.")
-            msg_box.setStandardButtons(QMessageBox.Ok)
-            msg_box.setModal(True)
             
-            log_print("DEBUG: Showing message box")
-            result = msg_box.exec()
+            # Continue with the existing code to handle the downloaded file
+            # ...existing code...
             
-            log_print(f"Message box result: {result} (QMessageBox.Ok={QMessageBox.Ok})")
-
-            # Move (or overwrite) into the app folder
-            final_path = os.path.join(str(current_app_info['app_dir']), new_exe_name)
-            log_print(f"Moving downloaded file to final location: {final_path}")
-            
-            try:
-                log_print(f"Moving {new_exe_temp_path} to {final_path}")
-                if os.path.exists(final_path):
-                    log_print(f"Target file already exists, will be replaced")
-                    
-                # First check permissions
-                access_check = os.access(os.path.dirname(final_path), os.W_OK)
-                log_print(f"Destination directory writable: {access_check}")
-                    
-                try:
-                    shutil.move(new_exe_temp_path, final_path)
-                    log_print("File move successful")
-                except PermissionError:
-                    log_print("Permission error, trying copy instead")
-                    shutil.copy2(new_exe_temp_path, final_path)
-                    os.remove(new_exe_temp_path)
-                    log_print("File copy successful, original temp file removed")
-                log_print("File move/copy completed")
-                
-                # Verify the file was actually moved
-                if os.path.exists(final_path):
-                    log_print(f"Final file exists at {final_path}, size: {os.path.getsize(final_path)}")
-                else:
-                    log_print("ERROR: Final file does not exist after move/copy!")
-                    
-            except Exception as e:
-                error_msg = f"Failed to swap executable:\n{e}"
-                log_print(f"Error moving/copying file: {error_msg}")
-                QMessageBox.critical(self, "Update Error", error_msg)
-                try:
-                    os.remove(new_exe_temp_path)
-                except Exception as e2:
-                    log_print(f"Error removing temp file: {e2}")
-                return
-
-            # Launch the fresh version
-            log_print(f"DEBUG: Launching new version: {final_path}")
-            try:
-                log_print("About to start subprocess")
-                new_process = subprocess.Popen([str(final_path)])
-                log_print(f"New process started with PID: {new_process.pid}")
-            except Exception as e:
-                log_print(f"Error launching new process: {e}")
-                QMessageBox.critical(self, "Launch Error", f"Failed to start new version: {e}")
-                return
-
-            # Clean up and exit this (old) process
-            log_print("Preparing for update and exit")
-            self._prepare_for_update()
-            self._cleanup_old_versions()
-            log_print("Exiting old version")
-            os._exit(0)
-
         except Exception as e:
             # Ensure progress dialog is closed on error
-            if progress:
-                progress.close()
-                progress = None
+            _safely_close_progress()
             
             # Force UI update
             QApplication.processEvents()
@@ -644,280 +641,40 @@ exit /b 0
             if not self._download_cancelled:
                 error_msg = str(e)
                 log_print(f"Download error: {error_msg}")
-                if "HTTP Error" in error_msg:
-                    error_msg += "\n\nThis might be a temporary network issue. Please try again later."
+                
+                # Provide more specific error messages based on the exception
+                if "HTTP error" in error_msg:
+                    error_msg += "\n\nThis might be a temporary server issue. Please try again later."
+                elif "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
+                    error_msg = f"Connection timed out: {error_msg}\n\nPlease check your internet connection and try again."
                 elif "SSL" in error_msg or "certificate" in error_msg.lower():
-                    error_msg += "\n\nThis might be a certificate issue. Please check your internet connection."
+                    error_msg += "\n\nThis might be a certificate issue. Please check your internet security settings."
+                elif "Name or service not known" in error_msg or "getaddrinfo failed" in error_msg:
+                    error_msg = "Cannot reach update server. Please check your internet connection."
+                
                 QMessageBox.critical(self, "Update Error", f"Failed to download update:\n{error_msg}")
+            else:
+                log_print("Download was cancelled by user")
+            
+            # Clean up temp file
             try:
-                os.remove(new_exe_temp_path)
+                if os.path.exists(new_exe_temp_path):
+                    os.remove(new_exe_temp_path)
+                    log_print(f"Removed temp file: {new_exe_temp_path}")
             except Exception as e:
                 log_print(f"Error removing temp file: {e}")
+            return
 
-    def _cancel_download(self, file_path):
-        """Handle download cancellation - legacy method"""
-        log_print("Download cancel requested by user (legacy method)")
-        self._download_cancelled = True
-        try:
-            if os.path.exists(file_path):
-                os.remove(file_path)
-                log_print(f"Removed temporary file: {file_path}")
-        except Exception as e:
-            log_print(f"Failed to remove temporary file: {e}")
-
-    def _handle_download_cancel(self):
+    def _on_download_cancelled(self):
         """Handle download cancellation from the progress dialog"""
-        log_print("Download cancel requested by user from progress dialog")
-        self._download_cancelled = True
-        
-    def _launch_update_process(self, new_exe_temp_path, current_app_info):
-        """Launch the update process using a script"""
-        dest_exe_name = filename_from_url(
-            self.current_update_info.get("download_url", "")
-        )
-        try:
-            # Create update script
-            script_path, script_type = self._create_update_script(
-                new_exe_temp_path, current_app_info, dest_exe_name
-            )
-            final_path = current_app_info['app_dir'] / dest_exe_name
-
-            debug_msg = (
-                f"About to run updater.\n"
-                f"Script: {script_path}\n"
-                f"Temp new exe: {new_exe_temp_path}\n"
-                f"Current exe: {current_app_info['exe_path']}\n"
-                f"Target exe: {final_path}\n"
-            )
-            QMessageBox.information(
-                self,
-                "DEBUG",
-                debug_msg
-            )
-
-            # Prepare for shutdown
-            self._prepare_for_update()
-
-            if script_type == 'batch':
-                # Use /k for debugging (cmd window stays open)
-                import subprocess
-                subprocess.Popen([
-                    'cmd', '/k', script_path
-                ])
-                os._exit(0)
-            elif script_type == 'powershell':
-                subprocess.Popen([
-                    'powershell',
-                    '-WindowStyle', 'Hidden',
-                    '-ExecutionPolicy', 'Bypass',
-                    '-File', script_path
-                ], creationflags=subprocess.CREATE_NO_WINDOW)
-                os._exit(0)
-            else:
-                subprocess.Popen(['/bin/bash', script_path])
-                os._exit(0)
-
-        except Exception as e:
-            error_msg = f"Failed to launch update process: {e}"
-            print(error_msg)
-            QMessageBox.critical(self, "Update Error", error_msg)
-
-    def _prepare_for_update(self):
-        """Prepare the application for update by cleaning up resources"""
-        # Cancel any running audio processing
-        if self.audio_processor and self.audio_processor.isRunning():
-            self.audio_processor.terminate()
-            self.audio_processor.wait()
+        # Only handle cancellation if download hasn't completed
+        if not hasattr(self, '_download_completed') or not self._download_completed:
+            log_print("Download cancel requested by user from progress dialog")
+            self._download_cancelled = True
             
-        # Cleanup WinSparkle
-        global _ws
-        if platform.system() == "Windows" and _ws:
-            try:
-                _ws.win_sparkle_cleanup()
-            except:
-                pass
-
-    def open_wav(self):
-        dlg = QFileDialog(self)
-        dlg.setFileMode(QFileDialog.ExistingFiles)
-        dlg.setNameFilter("WAV (*.wav *.WAV)")
-        if not dlg.exec():
-            return
-        files = dlg.selectedFiles()
-        if not files:
-            return
-
-        # Disable UI during processing
-        self.open_btn.setEnabled(False)
-        self.export_checkbox.setEnabled(False)
-
-        # Create progress dialog
-        self.progress = QProgressDialog("Processing audio...", "Cancel", 0, len(files), self)
-        self.progress.setWindowModality(Qt.WindowModal)
-        self.progress.show()
-        QApplication.processEvents()
-
-        # Start audio processing in separate thread
-        self.audio_processor = AudioProcessor(files)
-        self.audio_processor.progress_updated.connect(self.on_audio_progress)
-        self.audio_processor.processing_complete.connect(self.on_audio_complete)
-        self.audio_processor.processing_error.connect(self.on_audio_error)
-        self.progress.canceled.connect(self.cancel_processing)
-        self.audio_processor.start()
-
-    def on_audio_progress(self, value):
-        if hasattr(self, 'progress'):
-            self.progress.setValue(value)
-            QApplication.processEvents()
-
-    def cancel_processing(self):
-        if self.audio_processor and self.audio_processor.isRunning():
-            self.audio_processor.terminate()
-            self.audio_processor.wait()
-        self.cleanup_processing()
-
-    def cleanup_processing(self):
-        # Re-enable UI
-        self.open_btn.setEnabled(True)
-        self.export_checkbox.setEnabled(True)
-        prog = getattr(self, 'progress', None)
-        if prog is not None:
-            prog.close()
-            # keep the attribute but clear it to avoid double‑deletion issues
-            self.progress = None
-
-    def on_audio_error(self, error_msg):
-        self.cleanup_processing()
-        QMessageBox.critical(self, "Processing Error", f"Failed to process audio: {error_msg}")
-
-    def on_audio_complete(self, spectrograms):
-        self.cleanup_processing()
-        
-        if self.export_checkbox.isChecked():
-            self.export_spectrograms(spectrograms)
-
-        # Show viewer dialog
-        self.show_spectrogram_viewer(spectrograms)
-
-    def export_spectrograms(self, spectrograms):
-        """Export spectrograms to PNG files"""
-        for wav_path, img in spectrograms:
-            norm = img - img.min()
-            if norm.max() > 0:
-                norm = norm / norm.max()
-            inds = (norm * 255).astype(np.uint8)
-            rgb = LUT[inds]
-            hop = 512
-            export_dir = os.path.join(os.path.dirname(wav_path), "spectrograms")
-            os.makedirs(export_dir, exist_ok=True)
-            duration_min = rgb.shape[1] * hop / TARGET_SR / 60.0
-
-            fig = plt.figure(figsize=(EXPORT_W/300, EXPORT_H/300), dpi=300)
-            ax = fig.add_subplot(111)
-            fig.subplots_adjust(left=0.08, right=0.98, top=0.92, bottom=0.12)
-            ax.imshow(np.flipud(rgb), aspect='auto',extent=[0, duration_min, 0, MAX_FREQ], origin='lower')
-            ax.set_xlabel("Time (min)",fontsize=3)
-            ax.set_ylabel("Frequency (kHz)",fontsize=3)
-            freqs=[0,2000,4000,6000,10000,12000,14000,16000]
-            ax.set_yticks(freqs)
-            ax.set_yticklabels([_hz_to_k_label(f) for f in freqs],fontsize=3)
-            ax.set_ylim(0, MAX_FREQ)
-            ax.tick_params(axis="both",which="both",direction="in",color="0.6",width=0.4,length=3,labelsize=3)
-            for spine in ax.spines.values(): spine.set_linewidth(0.4); spine.set_color("0.6")
-            ax.set_title(os.path.basename(wav_path),fontsize=5,pad=4)
-            png = os.path.join(export_dir, os.path.splitext(os.path.basename(wav_path))[0] + ".png")
-            fig.savefig(png,dpi=300,bbox_inches="tight",pad_inches=0.01)
-            plt.close(fig)
-
-    def show_spectrogram_viewer(self, spectrograms):
-        """Show the spectrogram viewer dialog"""
-        dialog = QDialog(self)
-        dialog.setWindowTitle("Spectrogram Viewer")
-        main_layout = QVBoxLayout(dialog)
-        pw = PlotWidget(background="w")
-        main_layout.addWidget(pw)
-
-        btn_layout = QHBoxLayout()
-
-        # Previous navigation button
-        prev_btn = QPushButton("Previous")
-
-        # Disabled, circular "Detect" button (under development)
-        detect_btn = QPushButton("")
-        detect_btn.setEnabled(False)
-        detect_btn.setFixedSize(50, 50)  # circle diameter (larger)
-        detect_btn.setToolTip("Detect Anomaly Events (under development)")
-        detect_btn.setStyleSheet(
-            "border-radius:25px;"
-            "background-color:#CCCCCC;"  # neutral grey
-            "border: 1px solid #999999;"
-        )
-
-        # Next navigation button
-        next_btn = QPushButton("Next")
-
-        # Add buttons to layout: Previous | Detect | Next
-        btn_layout.addWidget(prev_btn)
-        btn_layout.addWidget(detect_btn)
-        btn_layout.addWidget(next_btn)
-
-        main_layout.addLayout(btn_layout)
-
-        gain_layout = QHBoxLayout()
-        gain_label = QLabel("Color gain (dB):")
-        slider = QSlider(Qt.Horizontal); slider.setRange(0,40); slider.setValue(0)
-        gain_value = QLabel("0 dB")
-        gain_layout.addWidget(gain_label); gain_layout.addWidget(slider,1); gain_layout.addWidget(gain_value)
-        main_layout.addLayout(gain_layout)
-
-        small = self.font(); small.setPointSizeF(small.pointSizeF()*0.85)
-        gain_label.setFont(small); gain_value.setFont(small)
-
-        from PySide6.QtGui import QTransform
-        index=0
-        def update(idx):
-            nonlocal index
-            index = idx
-            pw.clear()
-            fp,img = spectrograms[idx]
-            db=slider.value(); img_f=img.astype(np.float32)/255.0
-            img_f=np.clip(img_f*(10**(db/20.0)),0,1); disp=(img_f*255).astype(np.uint8)
-            dialog.setWindowTitle(os.path.basename(fp))
-            freqs=[0,2000,4000,6000,10000,12000,14000,16000]
-            ticks=[(f,_hz_to_k_label(f)) for f in freqs]
-            hop=512; scale_x=hop/TARGET_SR/60
-            pw.setLabel("bottom","Time",units="min"); pw.setLabel("left","Freq",units="Hz")
-            pw.getAxis("left").setTicks([ticks])
-            item=ImageItem(disp)
-            item.setLookupTable(LUT,update=True)
-            item.setOpts(axisOrder="row-major")
-            item.setTransform(QTransform().scale(scale_x,-MAX_FREQ/(img.shape[0]-1)))
-            item.setPos(0,MAX_FREQ); pw.addItem(item); pw.setLimits(yMin=0,yMax=MAX_FREQ)
-            prev_btn.setEnabled(idx>0); next_btn.setEnabled(idx<len(spectrograms)-1)
-        slider.valueChanged.connect(lambda v: (gain_value.setText(f"{int(v)} dB"), update(index)))
-        prev_btn.clicked.connect(lambda: update(index-1))
-        next_btn.clicked.connect(lambda: update(index+1))
-        update(0)
-        dialog.resize(EXPORT_W, EXPORT_H+120)
-        dialog.exec()
-
-    def closeEvent(self,event):
-        global _ws
-        # Cancel any running audio processing
-        if self.audio_processor and self.audio_processor.isRunning():
-            self.audio_processor.terminate()
-            self.audio_processor.wait()
-            
-        if platform.system()=="Windows" and _ws:
-            try: _ws.win_sparkle_cleanup()
-            except: pass
-        for p in self._session_temp_files:
-            try: os.remove(p)
-            except: pass
-        super().closeEvent(event)
-
-if __name__ == "__main__":
-    app = QApplication(sys.argv)
-    window = Main()
-    window.show()
-    sys.exit(app.exec())
+            # If we have a temp file path, try to clean it up later
+            # Not cleaning up immediately as the file might still be in use
+            if hasattr(self, '_current_download_path') and self._current_download_path:
+                log_print(f"Will clean up temp file later: {self._current_download_path}")
+        else:
+            log_print("Ignoring cancellation signal - download already completed")
