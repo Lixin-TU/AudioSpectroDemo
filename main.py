@@ -145,7 +145,7 @@ def parse_appcast_xml(url):
 def check_for_updates_async():
     """Check for updates in a separate thread"""
     try:
-        current_version = "0.2.16"
+        current_version = "0.2.17"
         appcast_url = "https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml"
 
         update_info = parse_appcast_xml(appcast_url)
@@ -248,7 +248,7 @@ class Main(QMainWindow):
             _ws.win_sparkle_set_log_path.argtypes = [ctypes.c_wchar_p]
 
             _ws.win_sparkle_set_appcast_url("https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml")
-            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.16")
+            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.17")
             _ws.win_sparkle_set_verbosity_level(2)
             _ws.win_sparkle_set_log_path(WINSPARKLE_LOG_PATH)
             _ws.win_sparkle_init()
@@ -295,42 +295,171 @@ class Main(QMainWindow):
         self.update_label.setText(f"❌ Update check failed: {msg}")
         self.update_label.setStyleSheet("color: #F44336; font-size: 12px; padding: 5px;")
 
-    def _get_safe_installer_path(self, url):
-        """Get a safe path for the installer, trying app directory first, then fallback to temp"""
-        installer_name = os.path.basename(url)
+    def _get_current_app_info(self):
+        """Get information about the current running application"""
+        if getattr(sys, "frozen", False):
+            # Running as PyInstaller executable
+            current_exe = pathlib.Path(sys.executable).resolve()
+            app_dir = current_exe.parent
+            return {
+                'exe_path': current_exe,
+                'app_dir': app_dir,
+                'is_frozen': True,
+                'exe_name': current_exe.name
+            }
+        else:
+            # Running as script
+            script_path = pathlib.Path(__file__).resolve()
+            return {
+                'exe_path': script_path,
+                'app_dir': script_path.parent,
+                'is_frozen': False,
+                'exe_name': script_path.name
+            }
+
+    def _create_update_script(self, installer_path, current_app_info):
+        """Create an update script that handles the replacement properly"""
+        current_exe = current_app_info['exe_path']
+        app_dir = current_app_info['app_dir']
         
-        # Try to save in application directory first
-        app_dir = pathlib.Path(sys.executable).parent if getattr(sys, "frozen", False) \
-                  else pathlib.Path(__file__).resolve().parent
+        if platform.system() == "Windows":
+            # Create PowerShell script for better reliability
+            script_content = f'''
+# AudioSpectroDemo Update Script
+Write-Host "Starting update process..."
+
+# Wait for main application to close
+Start-Sleep -Seconds 2
+
+# Backup current executable (optional)
+$currentExe = "{current_exe}"
+$backupExe = "{current_exe}.backup"
+if (Test-Path $currentExe) {{
+    try {{
+        Copy-Item $currentExe $backupExe -Force
+        Write-Host "Created backup: $backupExe"
+    }} catch {{
+        Write-Host "Warning: Could not create backup"
+    }}
+}}
+
+# Run the installer
+Write-Host "Launching installer: {installer_path}"
+try {{
+    $process = Start-Process -FilePath "{installer_path}" -Wait -PassThru
+    $exitCode = $process.ExitCode
+    Write-Host "Installer completed with exit code: $exitCode"
+    
+    if ($exitCode -eq 0) {{
+        Write-Host "Update completed successfully"
         
-        try:
-            # Test if we can write to the app directory
-            test_file = app_dir / ".write_test"
-            test_file.touch()
-            test_file.unlink()
+        # Clean up backup if update was successful
+        if (Test-Path $backupExe) {{
+            Remove-Item $backupExe -Force -ErrorAction SilentlyContinue
+        }}
+        
+        # Try to launch the updated application
+        if (Test-Path $currentExe) {{
+            Write-Host "Launching updated application..."
+            Start-Process -FilePath $currentExe
+        }}
+    }} else {{
+        Write-Host "Update failed. Restoring backup if available..."
+        if (Test-Path $backupExe) {{
+            Copy-Item $backupExe $currentExe -Force
+            Remove-Item $backupExe -Force -ErrorAction SilentlyContinue
+            Write-Host "Backup restored"
+        }}
+    }}
+}} catch {{
+    Write-Host "Error running installer: $_"
+}}
+
+# Clean up installer
+try {{
+    Remove-Item "{installer_path}" -Force -ErrorAction SilentlyContinue
+    Write-Host "Cleaned up installer"
+}} catch {{
+    Write-Host "Could not clean up installer"
+}}
+
+# Clean up this script
+Start-Sleep -Seconds 1
+Remove-Item $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+'''
             
-            # Clean up any old installers
-            for f in app_dir.glob("*_AudioSpectroDemo_*"):
-                if f.is_file():
-                    try:
-                        os.remove(f)
-                    except Exception:
-                        pass
+            script_file = tempfile.NamedTemporaryFile(
+                mode='w', 
+                suffix='.ps1', 
+                delete=False,
+                encoding='utf-8'
+            )
+            script_file.write(script_content)
+            script_file.close()
             
-            installer_path = app_dir / installer_name
-            return str(installer_path), True  # True means app directory
+            return script_file.name, 'powershell'
             
-        except (PermissionError, OSError):
-            # Fallback to temp directory
-            temp_installer = tempfile.NamedTemporaryFile(
-                suffix=f"_{installer_name}", 
+        else:
+            # Unix/Linux/macOS shell script
+            script_content = f'''#!/bin/bash
+echo "Starting update process..."
+
+# Wait for main application to close
+sleep 3
+
+# Backup current executable (optional)
+CURRENT_EXE="{current_exe}"
+BACKUP_EXE="{current_exe}.backup"
+
+if [ -f "$CURRENT_EXE" ]; then
+    cp "$CURRENT_EXE" "$BACKUP_EXE" 2>/dev/null && echo "Created backup: $BACKUP_EXE" || echo "Warning: Could not create backup"
+fi
+
+# Make installer executable and run it
+chmod +x "{installer_path}"
+echo "Launching installer: {installer_path}"
+
+if "{installer_path}"; then
+    echo "Update completed successfully"
+    
+    # Clean up backup if update was successful
+    [ -f "$BACKUP_EXE" ] && rm -f "$BACKUP_EXE"
+    
+    # Try to launch the updated application
+    if [ -f "$CURRENT_EXE" ]; then
+        echo "Launching updated application..."
+        "$CURRENT_EXE" &
+    fi
+else
+    echo "Update failed. Restoring backup if available..."
+    if [ -f "$BACKUP_EXE" ]; then
+        mv "$BACKUP_EXE" "$CURRENT_EXE"
+        echo "Backup restored"
+    fi
+fi
+
+# Clean up installer
+rm -f "{installer_path}"
+echo "Cleaned up installer"
+
+# Clean up this script
+sleep 1
+rm -f "$0"
+'''
+            
+            script_file = tempfile.NamedTemporaryFile(
+                mode='w', 
+                suffix='.sh', 
                 delete=False
             )
-            temp_installer.close()
-            return temp_installer.name, False  # False means temp directory
+            script_file.write(script_content)
+            script_file.close()
+            os.chmod(script_file.name, 0o755)
+            
+            return script_file.name, 'bash'
 
     def download_update(self):
-        """Download and install update with improved app replacement logic"""
+        """Download and install update with improved logic"""
         info = getattr(self, 'current_update_info', {})
         url = info.get('download_url')
         if not url:
@@ -340,8 +469,9 @@ class Main(QMainWindow):
         reply = QMessageBox.question(
             self, 
             "Update Confirmation", 
-            "This will download and install the update, replacing the current application.\n\n"
-            "The application will close during the update process.\n\n"
+            "This will download and install the update.\n\n"
+            "The current application will be replaced with the new version.\n"
+            "The application will restart automatically after the update.\n\n"
             "Do you want to continue?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes
@@ -349,12 +479,17 @@ class Main(QMainWindow):
         if reply != QMessageBox.Yes:
             return
 
-        # Get safe installer path
-        installer_path, in_app_dir = self._get_safe_installer_path(url)
+        # Get current application info
+        current_app_info = self._get_current_app_info()
         
-        # Track installer for cleanup
-        if in_app_dir:
-            self._session_temp_files.append(installer_path)
+        # Create installer path in temp directory to avoid conflicts
+        installer_name = os.path.basename(url)
+        temp_installer = tempfile.NamedTemporaryFile(
+            suffix=f"_{installer_name}", 
+            delete=False
+        )
+        temp_installer.close()
+        installer_path = temp_installer.name
 
         progress = QProgressDialog("Downloading update...", "Cancel", 0, 100, self)
         progress.setWindowModality(Qt.WindowModal)
@@ -380,16 +515,8 @@ class Main(QMainWindow):
             if self._download_cancelled:
                 return
             
-            # Prepare for update
-            self._prepare_for_update()
-            
-            # Launch installer with appropriate strategy
-            if in_app_dir:
-                # Installer is in app directory - use delayed execution
-                self._launch_delayed_installer(installer_path)
-            else:
-                # Installer is in temp directory - can run immediately
-                self._launch_immediate_installer(installer_path)
+            # Create and launch update script
+            self._launch_update_process(installer_path, current_app_info)
             
         except Exception as e:
             progress.close()
@@ -408,6 +535,34 @@ class Main(QMainWindow):
         except:
             pass
 
+    def _launch_update_process(self, installer_path, current_app_info):
+        """Launch the update process using a script"""
+        try:
+            # Create update script
+            script_path, script_type = self._create_update_script(installer_path, current_app_info)
+            
+            # Prepare for shutdown
+            self._prepare_for_update()
+            
+            # Launch update script
+            if script_type == 'powershell':
+                # Use PowerShell on Windows
+                subprocess.Popen([
+                    'powershell', 
+                    '-WindowStyle', 'Hidden',
+                    '-ExecutionPolicy', 'Bypass',
+                    '-File', script_path
+                ], creationflags=subprocess.CREATE_NO_WINDOW)
+            else:
+                # Use bash on Unix systems
+                subprocess.Popen(['/bin/bash', script_path])
+            
+            # Close the application immediately
+            QTimer.singleShot(100, lambda: QApplication.quit())
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Update Error", f"Failed to launch update process: {e}")
+
     def _prepare_for_update(self):
         """Prepare the application for update by cleaning up resources"""
         # Cancel any running audio processing
@@ -422,51 +577,6 @@ class Main(QMainWindow):
                 _ws.win_sparkle_cleanup()
             except:
                 pass
-
-    def _launch_delayed_installer(self, installer_path):
-        """Launch installer with delay to allow current app to close"""
-        if platform.system() == "Windows":
-            # Create batch script for delayed execution
-            batch_content = f'''@echo off
-echo Updating AudioSpectroDemo...
-timeout /t 3 /nobreak > nul
-start "" "{installer_path}"
-'''
-            batch_file = tempfile.NamedTemporaryFile(mode='w', suffix='.bat', delete=False)
-            batch_file.write(batch_content)
-            batch_file.close()
-            
-            subprocess.Popen(['cmd', '/c', batch_file.name], 
-                           creationflags=subprocess.CREATE_NO_WINDOW)
-        else:
-            # Create shell script for Unix systems
-            script_content = f'''#!/bin/bash
-echo "Updating AudioSpectroDemo..."
-sleep 3
-chmod +x "{installer_path}"
-"{installer_path}" &
-'''
-            script_file = tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False)
-            script_file.write(script_content)
-            script_file.close()
-            os.chmod(script_file.name, 0o755)
-            
-            subprocess.Popen(['/bin/bash', script_file.name])
-        
-        # Close the application
-        QTimer.singleShot(100, lambda: QApplication.quit())
-
-    def _launch_immediate_installer(self, installer_path):
-        """Launch installer immediately (when in temp directory)"""
-        try:
-            if platform.system() != "Windows":
-                os.chmod(installer_path, 0o755)
-            
-            subprocess.Popen([installer_path])
-            QApplication.quit()
-            
-        except Exception as e:
-            QMessageBox.critical(self, "Update Error", f"Failed to launch installer: {e}")
 
     def open_wav(self):
         dlg = QFileDialog(self)
