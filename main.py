@@ -4,6 +4,24 @@ import os
 import platform
 import pathlib
 import ctypes
+
+# --- Compatibility shims for the frozen Windows build -----------------------
+# Ensure 'unittest' is always importable (PyInstaller one‑file may omit it)
+try:
+    import unittest  # noqa: F401
+except ModuleNotFoundError:
+    import types as _types, sys as _sys
+    _stub = _types.ModuleType("unittest")
+    _sys.modules["unittest"] = _stub
+
+# Hide the temporary PyInstaller extraction folder (e.g. _MEI12345)
+if hasattr(sys, "_MEIPASS") and platform.system() == "Windows":
+    try:
+        FILE_ATTRIBUTE_HIDDEN = 0x02
+        ctypes.windll.kernel32.SetFileAttributesW(sys._MEIPASS, FILE_ATTRIBUTE_HIDDEN)
+    except Exception:
+        pass
+# ---------------------------------------------------------------------------
 import numpy as np
 import matplotlib.pyplot as plt
 import librosa

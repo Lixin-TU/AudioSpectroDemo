@@ -57,7 +57,6 @@ jobs:
                       --add-data "WinSparkle.dll;." \
                       --runtime-tmpdir . \
                       --exclude-module tkinter \
-                      --exclude-module unittest \
                       --exclude-module test \
                       --hidden-import=PIL._tkinter_finder \
                       --collect-all soundfile \
