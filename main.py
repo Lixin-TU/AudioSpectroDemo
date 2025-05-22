@@ -467,6 +467,9 @@ exit /b 0
         new_exe_temp_path = temp_new_exe.name
         log_print(f"Temporary download location: {new_exe_temp_path}")
 
+        # IMPORTANT: Reset the download cancelled flag before starting
+        self._download_cancelled = False
+        
         progress = QProgressDialog("Downloading update...", "Cancel", 0, 100, self)
         progress.setWindowModality(Qt.WindowModal)
         progress.setAutoClose(True)
@@ -474,8 +477,6 @@ exit /b 0
         progress.canceled.connect(lambda: self._cancel_download(new_exe_temp_path))
         progress.show()
         QApplication.processEvents()
-
-        self._download_cancelled = False
 
         def _hook(count, block_size, total_size):
             if self._download_cancelled:
@@ -508,6 +509,8 @@ exit /b 0
             QApplication.processEvents()
             log_print("UI updated after download")
 
+            # THIS IS THE KEY FIX: Check the flag ONLY once, right after the download
+            # and then proceed with the rest of the update without checking it again
             if self._download_cancelled:
                 log_print("Download was cancelled")
                 return
@@ -637,11 +640,13 @@ exit /b 0
 
     def _cancel_download(self, file_path):
         """Handle download cancellation"""
+        log_print("Download cancel requested by user")
         self._download_cancelled = True
         try:
             os.remove(file_path)
-        except:
-            pass
+            log_print(f"Removed temporary file: {file_path}")
+        except Exception as e:
+            log_print(f"Failed to remove temporary file: {e}")
 
     def _launch_update_process(self, new_exe_temp_path, current_app_info):
         """Launch the update process using a script"""
