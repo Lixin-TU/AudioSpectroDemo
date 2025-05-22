@@ -42,6 +42,7 @@ import subprocess
 import tempfile
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
+import re
 
 from PySide6.QtWidgets import (
     QApplication,
@@ -203,6 +204,7 @@ class Main(QMainWindow):
 
         self._init_winsparkle()
         self._build_ui()
+        self._cleanup_old_versions()
 
         update_checker.update_available.connect(self.on_update_available)
         update_checker.update_not_available.connect(self.on_update_not_available)
@@ -211,6 +213,24 @@ class Main(QMainWindow):
         self.open_btn.clicked.connect(self.open_wav)
         self.update_button.clicked.connect(self.download_update)
         QTimer.singleShot(0, self.check_for_updates)
+
+    def _cleanup_old_versions(self):
+        """
+        Delete any other AudioSpectroDemo‑vX.Y.Z.exe files in the app folder
+        except the one currently running.
+        """
+        info = self._get_current_app_info()
+        exe_path = info['exe_path'].resolve()
+        app_dir  = info['app_dir']
+        pat = re.compile(r"AudioSpectroDemo-v[\d.]+\.exe$", re.IGNORECASE)
+        for p in app_dir.glob("AudioSpectroDemo-v*.exe"):
+            try:
+                if p.resolve() == exe_path:
+                    continue
+                if pat.search(p.name):
+                    p.unlink(missing_ok=True)
+            except Exception:
+                pass
 
     def _build_ui(self):
         central = pg.QtWidgets.QWidget(self)
@@ -467,22 +487,40 @@ exit /b 0
             print(f"New executable name: {new_exe_name}")
             print(f"Current executable: {current_app_info['exe_path']}")
             
-            # Create and launch update script
+            # ----------------------------------------------------
+            # SIMPLE IN‑PLACE UPDATE (move file, restart, clean up)
+            final_path = current_app_info['app_dir'] / new_exe_name
             try:
-                self._launch_update_process(new_exe_temp_path, current_app_info)
-            except Exception as e:
-                import traceback
-                tb = traceback.format_exc()
-                print("UPDATE PROCESS LAUNCH ERROR:\n", tb)
-                QMessageBox.critical(self, "Update Launch Error", f"{e}\n\n{tb}")
-                # Also write error to Desktop for debugging
+                # Move (or overwrite) into the app folder
                 try:
-                    with open(os.path.join(os.path.expanduser("~"), "Desktop", "audiospectro_update_error.txt"), "w", encoding="utf-8") as f:
-                        f.write(tb)
-                except Exception as err:
-                    print("Error writing to desktop:", err)
-            # the above try/except block now calls _launch_update_process
-            
+                    shutil.move(new_exe_temp_path, final_path)
+                except PermissionError:
+                    shutil.copy2(new_exe_temp_path, final_path)
+                    os.remove(new_exe_temp_path)
+
+                QMessageBox.information(
+                    self,
+                    "Update ready",
+                    "The new version has been downloaded.\n"
+                    "AudioSpectroDemo will now restart."
+                )
+
+                # Launch the fresh version
+                subprocess.Popen([str(final_path)])
+
+                # Clean up and exit this (old) process
+                self._prepare_for_update()
+                self._cleanup_old_versions()
+                os._exit(0)
+
+            except Exception as e:
+                QMessageBox.critical(self, "Update Error", f"Failed to swap executable:\n{e}")
+                try:
+                    os.remove(new_exe_temp_path)
+                except Exception:
+                    pass
+            # ----------------------------------------------------
+
         except Exception as e:
             progress.close()
             if not self._download_cancelled:
