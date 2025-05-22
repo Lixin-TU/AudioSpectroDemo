@@ -24,8 +24,8 @@ logging.basicConfig(
 
 # Replace print statements with logging
 def log_print(message):
-    print(message)  # Still print to console when available
-    logging.info(message)  # Also log to file
+    # logging.info(message)
+    pass
 
 # --- Compatibility shims for the frozen Windows build -----------------------
 # Ensure 'unittest' is always importable (PyInstaller one‑file may omit it)
@@ -179,10 +179,10 @@ def filename_from_url(url: str, default: str = "update.exe") -> str:
 # ---------------------------------------------------------------------------
 
 
-def check_for_updates_async():
+def check_for_updates_async():  
     """Check for updates in a separate thread"""
     try:
-        current_version = "0.2.19"
+        current_version = "0.2.20"
         appcast_url = "https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml"
 
         update_info = parse_appcast_xml(appcast_url)
@@ -304,7 +304,7 @@ class Main(QMainWindow):
             _ws.win_sparkle_set_log_path.argtypes = [ctypes.c_wchar_p]
 
             _ws.win_sparkle_set_appcast_url("https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml")
-            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.19")
+            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.20")
             _ws.win_sparkle_set_verbosity_level(2)
             _ws.win_sparkle_set_log_path(WINSPARKLE_LOG_PATH)
             _ws.win_sparkle_init()
@@ -511,7 +511,7 @@ exit /b 0
         try:
             # Add headers to avoid potential blocking
             req = urllib.request.Request(url)
-            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.19')
+            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.20')
             log_print(f"Starting download from URL: {url}")
 
             # Actually perform the download
