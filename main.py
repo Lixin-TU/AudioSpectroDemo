@@ -474,19 +474,43 @@ exit /b 0
         progress.setWindowModality(Qt.WindowModal)
         progress.setAutoClose(True)
         progress.setValue(0)
-        progress.canceled.connect(lambda: self._cancel_download(new_exe_temp_path))
-        progress.show()
-        QApplication.processEvents()
-
+        # Store progress dialog reference to access it later
+        self._download_progress = progress
+        # Use a safer cancellation mechanism
+        progress.canceled.connect(self._handle_download_cancel)
+        
+        # Method to set the cancelled flag
+        def _handle_cancellation():
+            self._download_cancelled = True
+            log_print("Download cancellation requested")
+            try:
+                os.remove(new_exe_temp_path)
+                log_print(f"Removed temp file: {new_exe_temp_path}")
+            except Exception as e:
+                log_print(f"Error removing temp file: {e}")
+        
+        # Connect the cancellation handling to this new method
+        progress.canceled.connect(lambda: _handle_cancellation())
+        
+        # Method to safely close progress dialog
+        def _safely_close_progress():
+            if hasattr(self, '_download_progress') and self._download_progress:
+                try:
+                    self._download_progress.close()
+                    self._download_progress = None
+                except Exception as e:
+                    log_print(f"Error closing progress: {e}")
+        
         def _hook(count, block_size, total_size):
             if self._download_cancelled:
-                raise Exception("Download cancelled")
+                raise Exception("Download cancelled by user")
             if total_size > 0:
                 pct = int(count * block_size * 100 / total_size)
-                progress.setValue(min(pct, 100))
-                downloaded_mb = (count * block_size) / (1024*1024)
-                total_mb = total_size / (1024*1024)
-                progress.setLabelText(f"Downloading {new_exe_name}... {downloaded_mb:.1f}/{total_mb:.1f} MB")
+                if hasattr(self, '_download_progress') and self._download_progress:
+                    self._download_progress.setValue(min(pct, 100))
+                    downloaded_mb = (count * block_size) / (1024*1024)
+                    total_mb = total_size / (1024*1024)
+                    self._download_progress.setLabelText(f"Downloading {new_exe_name}... {downloaded_mb:.1f}/{total_mb:.1f} MB")
                 QApplication.processEvents()
 
         try:
@@ -499,26 +523,25 @@ exit /b 0
             urllib.request.urlretrieve(url, new_exe_temp_path, reporthook=_hook)
             log_print("Download completed successfully")
             
-            # Ensure progress dialog is closed
-            if progress:
-                log_print("Closing progress dialog")
-                progress.close()
-                progress = None
+            # Ensure progress dialog is closed - safely
+            _safely_close_progress()
             
             # Force UI update
             QApplication.processEvents()
             log_print("UI updated after download")
 
-            # THIS IS THE KEY FIX: Check the flag ONLY once, right after the download
-            # and then proceed with the rest of the update without checking it again
+            # Only proceed with update if download was not cancelled
             if self._download_cancelled:
-                log_print("Download was cancelled")
+                log_print("Download was cancelled, aborting update")
+                return
+            
+            # Additional safeguard: verify the download worked and file exists
+            if not os.path.exists(new_exe_temp_path) or os.path.getsize(new_exe_temp_path) == 0:
+                log_print("ERROR: Download file is missing or empty")
+                QMessageBox.critical(self, "Update Error", "Downloaded file is missing or empty.")
                 return
 
             # Verify downloaded file
-            if not os.path.exists(new_exe_temp_path):
-                raise Exception("Downloaded file is missing")
-
             file_size = os.path.getsize(new_exe_temp_path)
             log_print(f"Verifying download: file_size={file_size} bytes")
             if file_size == 0:
@@ -639,15 +662,21 @@ exit /b 0
                 log_print(f"Error removing temp file: {e}")
 
     def _cancel_download(self, file_path):
-        """Handle download cancellation"""
-        log_print("Download cancel requested by user")
+        """Handle download cancellation - legacy method"""
+        log_print("Download cancel requested by user (legacy method)")
         self._download_cancelled = True
         try:
-            os.remove(file_path)
-            log_print(f"Removed temporary file: {file_path}")
+            if os.path.exists(file_path):
+                os.remove(file_path)
+                log_print(f"Removed temporary file: {file_path}")
         except Exception as e:
             log_print(f"Failed to remove temporary file: {e}")
 
+    def _handle_download_cancel(self):
+        """Handle download cancellation from the progress dialog"""
+        log_print("Download cancel requested by user from progress dialog")
+        self._download_cancelled = True
+        
     def _launch_update_process(self, new_exe_temp_path, current_app_info):
         """Launch the update process using a script"""
         dest_exe_name = filename_from_url(
