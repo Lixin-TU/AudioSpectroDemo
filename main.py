@@ -3,7 +3,9 @@ import time
 import os
 import platform
 import pathlib
+
 import ctypes
+import shutil
 
 # --- Compatibility shims for the frozen Windows build -----------------------
 # Ensure 'unittest' is always importable (PyInstaller one‑file may omit it)
@@ -14,11 +16,18 @@ except ModuleNotFoundError:
     _stub = _types.ModuleType("unittest")
     _sys.modules["unittest"] = _stub
 
-# Hide the temporary PyInstaller extraction folder (e.g. _MEI12345)
+# Hide the temporary PyInstaller extraction folder (e.g. _MEI12345) and
+# remove any *older* _MEI folders so only the latest one remains.
 if hasattr(sys, "_MEIPASS") and platform.system() == "Windows":
     try:
+        mei_dir = pathlib.Path(sys._MEIPASS).resolve()
+        # Delete all sibling _MEI* directories except the one in use
+        for p in mei_dir.parent.glob("_MEI*"):
+            if p.is_dir() and p != mei_dir:
+                shutil.rmtree(p, ignore_errors=True)
+        # Finally hide the current extraction folder
         FILE_ATTRIBUTE_HIDDEN = 0x02
-        ctypes.windll.kernel32.SetFileAttributesW(sys._MEIPASS, FILE_ATTRIBUTE_HIDDEN)
+        ctypes.windll.kernel32.SetFileAttributesW(str(mei_dir), FILE_ATTRIBUTE_HIDDEN)
     except Exception:
         pass
 # ---------------------------------------------------------------------------
@@ -136,7 +145,7 @@ def parse_appcast_xml(url):
 def check_for_updates_async():
     """Check for updates in a separate thread"""
     try:
-        current_version = "0.2.13"
+        current_version = "0.2.14"
         appcast_url = "https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml"
 
         update_info = parse_appcast_xml(appcast_url)
@@ -238,7 +247,7 @@ class Main(QMainWindow):
             _ws.win_sparkle_set_log_path.argtypes = [ctypes.c_wchar_p]
 
             _ws.win_sparkle_set_appcast_url("https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml")
-            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.13")
+            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.14")
             _ws.win_sparkle_set_verbosity_level(2)
             _ws.win_sparkle_set_log_path(WINSPARKLE_LOG_PATH)
             _ws.win_sparkle_init()
