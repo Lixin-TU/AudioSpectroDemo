@@ -4,4 +4,3 @@ librosa
 soundfile
 numpy
 matplotlib
-imageio

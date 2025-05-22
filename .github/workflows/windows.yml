@@ -23,7 +23,7 @@ jobs:
         with:
           python-version: '3.12'
 
-      # 3. Install every runtime dependency that main.py imports (and sub‑deps like soundfile for librosa)
+      # 3. Install every runtime dependency that main.py imports (and sub‐deps like soundfile for librosa)
       - name: Install Python dependencies
         shell: bash
         run: |
@@ -36,10 +36,9 @@ jobs:
             soundfile \
             numpy \
             pyinstaller-hooks-contrib \
-            matplotlib
+            matplotlib \
 
       # 4. Ensure the WinSparkle DLL is in the build context so PyInstaller can bundle it.
-      #    ➡️  If you store the DLL somewhere else, update the source path in the cp command.
       - name: Ensure WinSparkle DLL
         shell: bash
         run: |
@@ -49,16 +48,22 @@ jobs:
             echo "WinSparkle.dll already present, skipping copy."
           fi
 
-      # 5. Build a single‑file EXE.  "--add-data \"WinSparkle.dll;.\"" tells PyInstaller to embed the DLL
-      #    and drop it next to AudioSpectroDemo.exe at runtime.
+      # 5. Build with enhanced options for single-file reliability
       - name: Build Windows EXE
         shell: bash
         run: |
-          pyinstaller --noconfirm --noconsole --onefile --strip main.py \
+          pyinstaller --noconfirm --noconsole --onefile main.py \
                       --name AudioSpectroDemo \
-                      --add-data "WinSparkle.dll;."
+                      --add-data "WinSparkle.dll;." \
+                      --runtime-tmpdir . \
+                      --exclude-module tkinter \
+                      --exclude-module unittest \
+                      --exclude-module test \
+                      --hidden-import=PIL._tkinter_finder \
+                      --collect-all soundfile \
+                      --collect-all librosa
 
-      # 6. Stash the build output so you can download it from the workflow run if the release‑creation step fails.
+      # 6. Stash the build output so you can download it from the workflow run if the release‐creation step fails.
       - name: Archive build artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -77,7 +82,7 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # 8. Attach the freshly‑built EXE to the release page.
+      # 8. Attach the freshly‐built EXE to the release page.
       - name: Upload EXE to Release
         uses: actions/upload-release-asset@v1
         with:
