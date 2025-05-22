@@ -622,6 +622,15 @@ exit /b 0
                 log_print("About to start subprocess")
                 new_process = subprocess.Popen([str(final_path)])
                 log_print(f"New process started with PID: {new_process.pid}")
+                # Remove old executable after launching new process
+                try:
+                    old_exe = current_app_info['exe_path']
+                    log_print(f"Deleting old executable: {old_exe}")
+                    if os.path.exists(old_exe):
+                        os.remove(old_exe)
+                        log_print("Old executable deleted")
+                except Exception as e:
+                    log_print(f"Failed to delete old executable: {e}")
             except Exception as e:
                 log_print(f"Error launching new process: {e}")
                 QMessageBox.critical(self, "Launch Error", f"Failed to start new version: {e}")
@@ -916,6 +925,12 @@ exit /b 0
         for p in self._session_temp_files:
             try: os.remove(p)
             except: pass
+        # Delete update log file
+        try:
+            if os.path.exists(log_path):
+                os.remove(log_path)
+        except Exception:
+            pass
         super().closeEvent(event)
 
     def _on_download_cancelled(self):
