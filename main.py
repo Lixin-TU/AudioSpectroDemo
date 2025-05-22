@@ -323,71 +323,35 @@ class Main(QMainWindow):
         app_dir = current_app_info['app_dir']
         
         if platform.system() == "Windows":
-            # Create PowerShell script for better reliability
             script_content = f'''
-# AudioSpectroDemo Update Script
+# AudioSpectroDemo Self‑Update Script
 Write-Host "Starting update process..."
 
-# Wait for main application to close
-Start-Sleep -Seconds 2
+# Give the main application enough time to shut down
+Start-Sleep -Seconds 3
 
-# Backup current executable (optional)
 $currentExe = "{current_exe}"
-$backupExe = "{current_exe}.backup"
-if (Test-Path $currentExe) {{
-    try {{
-        Copy-Item $currentExe $backupExe -Force
-        Write-Host "Created backup: $backupExe"
-    }} catch {{
-        Write-Host "Warning: Could not create backup"
-    }}
-}}
+$newExe    = "{installer_path}"
+$backupExe = "$currentExe.backup"
 
-# Run the installer
-Write-Host "Launching installer: {installer_path}"
-try {{
-    $process = Start-Process -FilePath "{installer_path}" -Wait -PassThru
-    $exitCode = $process.ExitCode
-    Write-Host "Installer completed with exit code: $exitCode"
-    
-    if ($exitCode -eq 0) {{
-        Write-Host "Update completed successfully"
-        
-        # Clean up backup if update was successful
-        if (Test-Path $backupExe) {{
-            Remove-Item $backupExe -Force -ErrorAction SilentlyContinue
-        }}
-        
-        # Try to launch the updated application
-        if (Test-Path $currentExe) {{
-            Write-Host "Launching updated application..."
-            Start-Process -FilePath $currentExe
-        }}
-    }} else {{
-        Write-Host "Update failed. Restoring backup if available..."
-        if (Test-Path $backupExe) {{
-            Copy-Item $backupExe $currentExe -Force
-            Remove-Item $backupExe -Force -ErrorAction SilentlyContinue
-            Write-Host "Backup restored"
-        }}
-    }}
-}} catch {{
-    Write-Host "Error running installer: $_"
-}}
+Write-Host "Backing up current executable..."
+Copy-Item $currentExe $backupExe -Force
 
-# Clean up installer
-try {{
-    Remove-Item "{installer_path}" -Force -ErrorAction SilentlyContinue
-    Write-Host "Cleaned up installer"
-}} catch {{
-    Write-Host "Could not clean up installer"
-}}
+Write-Host "Replacing with new version..."
+Copy-Item $newExe $currentExe -Force
 
-# Clean up this script
+Write-Host "Launching updated application..."
+Start-Process -FilePath $currentExe
+
+# Clean up
+Write-Host "Cleaning up temporary files..."
+Remove-Item $backupExe -Force -ErrorAction SilentlyContinue
+Remove-Item $newExe  -Force -ErrorAction SilentlyContinue
+
+# Remove this script
 Start-Sleep -Seconds 1
 Remove-Item $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
 '''
-            
             script_file = tempfile.NamedTemporaryFile(
                 mode='w', 
                 suffix='.ps1', 
@@ -396,57 +360,35 @@ Remove-Item $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
             )
             script_file.write(script_content)
             script_file.close()
-            
             return script_file.name, 'powershell'
-            
         else:
-            # Unix/Linux/macOS shell script
             script_content = f'''#!/bin/bash
 echo "Starting update process..."
 
-# Wait for main application to close
 sleep 3
 
-# Backup current executable (optional)
 CURRENT_EXE="{current_exe}"
-BACKUP_EXE="{current_exe}.backup"
+NEW_EXE="{installer_path}"
+BACKUP_EXE="$CURRENT_EXE.backup"
 
-if [ -f "$CURRENT_EXE" ]; then
-    cp "$CURRENT_EXE" "$BACKUP_EXE" 2>/dev/null && echo "Created backup: $BACKUP_EXE" || echo "Warning: Could not create backup"
-fi
+echo "Backing up current executable..."
+cp "$CURRENT_EXE" "$BACKUP_EXE"
 
-# Make installer executable and run it
-chmod +x "{installer_path}"
-echo "Launching installer: {installer_path}"
+echo "Replacing with new version..."
+cp "$NEW_EXE" "$CURRENT_EXE"
+chmod +x "$CURRENT_EXE"
 
-if "{installer_path}"; then
-    echo "Update completed successfully"
-    
-    # Clean up backup if update was successful
-    [ -f "$BACKUP_EXE" ] && rm -f "$BACKUP_EXE"
-    
-    # Try to launch the updated application
-    if [ -f "$CURRENT_EXE" ]; then
-        echo "Launching updated application..."
-        "$CURRENT_EXE" &
-    fi
-else
-    echo "Update failed. Restoring backup if available..."
-    if [ -f "$BACKUP_EXE" ]; then
-        mv "$BACKUP_EXE" "$CURRENT_EXE"
-        echo "Backup restored"
-    fi
-fi
+echo "Launching updated application..."
+"$CURRENT_EXE" &
 
-# Clean up installer
-rm -f "{installer_path}"
-echo "Cleaned up installer"
+echo "Cleaning up..."
+rm -f "$BACKUP_EXE"
+rm -f "$NEW_EXE"
 
-# Clean up this script
+# Remove this script itself
 sleep 1
 rm -f "$0"
 '''
-            
             script_file = tempfile.NamedTemporaryFile(
                 mode='w', 
                 suffix='.sh', 
@@ -455,7 +397,6 @@ rm -f "$0"
             script_file.write(script_content)
             script_file.close()
             os.chmod(script_file.name, 0o755)
-            
             return script_file.name, 'bash'
 
     def download_update(self):
