@@ -145,7 +145,7 @@ def parse_appcast_xml(url):
 def check_for_updates_async():
     """Check for updates in a separate thread"""
     try:
-        current_version = "0.2.15"
+        current_version = "0.2.16"
         appcast_url = "https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml"
 
         update_info = parse_appcast_xml(appcast_url)
@@ -248,7 +248,7 @@ class Main(QMainWindow):
             _ws.win_sparkle_set_log_path.argtypes = [ctypes.c_wchar_p]
 
             _ws.win_sparkle_set_appcast_url("https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml")
-            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.15")
+            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.16")
             _ws.win_sparkle_set_verbosity_level(2)
             _ws.win_sparkle_set_log_path(WINSPARKLE_LOG_PATH)
             _ws.win_sparkle_init()
@@ -569,9 +569,29 @@ chmod +x "{installer_path}"
         main_layout.addWidget(pw)
 
         btn_layout = QHBoxLayout()
+
+        # Previous navigation button
         prev_btn = QPushButton("Previous")
+
+        # Disabled, circular "Detect" button (under development)
+        detect_btn = QPushButton("")
+        detect_btn.setEnabled(False)
+        detect_btn.setFixedSize(50, 50)  # circle diameter (larger)
+        detect_btn.setToolTip("Detect Anomaly Events (under development)")
+        detect_btn.setStyleSheet(
+            "border-radius:25px;"
+            "background-color:#CCCCCC;"  # neutral grey
+            "border: 1px solid #999999;"
+        )
+
+        # Next navigation button
         next_btn = QPushButton("Next")
-        btn_layout.addWidget(prev_btn); btn_layout.addWidget(next_btn)
+
+        # Add buttons to layout: Previous | Detect | Next
+        btn_layout.addWidget(prev_btn)
+        btn_layout.addWidget(detect_btn)
+        btn_layout.addWidget(next_btn)
+
         main_layout.addLayout(btn_layout)
 
         gain_layout = QHBoxLayout()
