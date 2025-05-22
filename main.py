@@ -145,7 +145,7 @@ def parse_appcast_xml(url):
 def check_for_updates_async():
     """Check for updates in a separate thread"""
     try:
-        current_version = "0.2.14"
+        current_version = "0.2.15"
         appcast_url = "https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml"
 
         update_info = parse_appcast_xml(appcast_url)
@@ -185,6 +185,7 @@ class Main(QMainWindow):
         self._session_temp_files: list[str] = []
         self.resize(900, 600)
         self.audio_processor = None
+        self._download_cancelled = False
 
         self._init_winsparkle()
         self._build_ui()
@@ -247,7 +248,7 @@ class Main(QMainWindow):
             _ws.win_sparkle_set_log_path.argtypes = [ctypes.c_wchar_p]
 
             _ws.win_sparkle_set_appcast_url("https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml")
-            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.14")
+            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.15")
             _ws.win_sparkle_set_verbosity_level(2)
             _ws.win_sparkle_set_log_path(WINSPARKLE_LOG_PATH)
             _ws.win_sparkle_init()
@@ -294,29 +295,79 @@ class Main(QMainWindow):
         self.update_label.setText(f"❌ Update check failed: {msg}")
         self.update_label.setStyleSheet("color: #F44336; font-size: 12px; padding: 5px;")
 
+    def _get_safe_installer_path(self, url):
+        """Get a safe path for the installer, trying app directory first, then fallback to temp"""
+        installer_name = os.path.basename(url)
+        
+        # Try to save in application directory first
+        app_dir = pathlib.Path(sys.executable).parent if getattr(sys, "frozen", False) \
+                  else pathlib.Path(__file__).resolve().parent
+        
+        try:
+            # Test if we can write to the app directory
+            test_file = app_dir / ".write_test"
+            test_file.touch()
+            test_file.unlink()
+            
+            # Clean up any old installers
+            for f in app_dir.glob("*_AudioSpectroDemo_*"):
+                if f.is_file():
+                    try:
+                        os.remove(f)
+                    except Exception:
+                        pass
+            
+            installer_path = app_dir / installer_name
+            return str(installer_path), True  # True means app directory
+            
+        except (PermissionError, OSError):
+            # Fallback to temp directory
+            temp_installer = tempfile.NamedTemporaryFile(
+                suffix=f"_{installer_name}", 
+                delete=False
+            )
+            temp_installer.close()
+            return temp_installer.name, False  # False means temp directory
+
     def download_update(self):
-        """Download and install update directly without creating temp directories"""
+        """Download and install update with improved app replacement logic"""
         info = getattr(self, 'current_update_info', {})
         url = info.get('download_url')
         if not url:
             return
 
-        # Create a single temp file for the installer
-        installer_name = os.path.basename(url)
-        temp_installer = tempfile.NamedTemporaryFile(
-            suffix=f"_{installer_name}", 
-            delete=False
+        # Show confirmation dialog
+        reply = QMessageBox.question(
+            self, 
+            "Update Confirmation", 
+            "This will download and install the update, replacing the current application.\n\n"
+            "The application will close during the update process.\n\n"
+            "Do you want to continue?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes
         )
-        temp_installer.close()
-        installer_path = temp_installer.name
+        if reply != QMessageBox.Yes:
+            return
 
-        progress = QProgressDialog("Downloading update...", None, 0, 100, self)
+        # Get safe installer path
+        installer_path, in_app_dir = self._get_safe_installer_path(url)
+        
+        # Track installer for cleanup
+        if in_app_dir:
+            self._session_temp_files.append(installer_path)
+
+        progress = QProgressDialog("Downloading update...", "Cancel", 0, 100, self)
         progress.setWindowModality(Qt.WindowModal)
         progress.setAutoClose(False)
         progress.setValue(0)
+        progress.canceled.connect(lambda: self._cancel_download(installer_path))
         QApplication.processEvents()
 
+        self._download_cancelled = False
+
         def _hook(count, block_size, total_size):
+            if self._download_cancelled:
+                raise Exception("Download cancelled")
             if total_size > 0:
                 pct = int(count * block_size * 100 / total_size)
                 progress.setValue(min(pct, 100))
@@ -326,17 +377,96 @@ class Main(QMainWindow):
             urllib.request.urlretrieve(url, installer_path, reporthook=_hook)
             progress.close()
             
-            # Launch installer directly
-            subprocess.Popen([installer_path], shell=False)
-            QApplication.quit()
+            if self._download_cancelled:
+                return
+            
+            # Prepare for update
+            self._prepare_for_update()
+            
+            # Launch installer with appropriate strategy
+            if in_app_dir:
+                # Installer is in app directory - use delayed execution
+                self._launch_delayed_installer(installer_path)
+            else:
+                # Installer is in temp directory - can run immediately
+                self._launch_immediate_installer(installer_path)
             
         except Exception as e:
             progress.close()
-            QMessageBox.critical(self, "Update Error", f"Failed to download update: {e}")
+            if not self._download_cancelled:
+                QMessageBox.critical(self, "Update Error", f"Failed to download update: {e}")
             try:
                 os.remove(installer_path)
             except:
                 pass
+
+    def _cancel_download(self, installer_path):
+        """Handle download cancellation"""
+        self._download_cancelled = True
+        try:
+            os.remove(installer_path)
+        except:
+            pass
+
+    def _prepare_for_update(self):
+        """Prepare the application for update by cleaning up resources"""
+        # Cancel any running audio processing
+        if self.audio_processor and self.audio_processor.isRunning():
+            self.audio_processor.terminate()
+            self.audio_processor.wait()
+            
+        # Cleanup WinSparkle
+        global _ws
+        if platform.system() == "Windows" and _ws:
+            try:
+                _ws.win_sparkle_cleanup()
+            except:
+                pass
+
+    def _launch_delayed_installer(self, installer_path):
+        """Launch installer with delay to allow current app to close"""
+        if platform.system() == "Windows":
+            # Create batch script for delayed execution
+            batch_content = f'''@echo off
+echo Updating AudioSpectroDemo...
+timeout /t 3 /nobreak > nul
+start "" "{installer_path}"
+'''
+            batch_file = tempfile.NamedTemporaryFile(mode='w', suffix='.bat', delete=False)
+            batch_file.write(batch_content)
+            batch_file.close()
+            
+            subprocess.Popen(['cmd', '/c', batch_file.name], 
+                           creationflags=subprocess.CREATE_NO_WINDOW)
+        else:
+            # Create shell script for Unix systems
+            script_content = f'''#!/bin/bash
+echo "Updating AudioSpectroDemo..."
+sleep 3
+chmod +x "{installer_path}"
+"{installer_path}" &
+'''
+            script_file = tempfile.NamedTemporaryFile(mode='w', suffix='.sh', delete=False)
+            script_file.write(script_content)
+            script_file.close()
+            os.chmod(script_file.name, 0o755)
+            
+            subprocess.Popen(['/bin/bash', script_file.name])
+        
+        # Close the application
+        QTimer.singleShot(100, lambda: QApplication.quit())
+
+    def _launch_immediate_installer(self, installer_path):
+        """Launch installer immediately (when in temp directory)"""
+        try:
+            if platform.system() != "Windows":
+                os.chmod(installer_path, 0o755)
+            
+            subprocess.Popen([installer_path])
+            QApplication.quit()
+            
+        except Exception as e:
+            QMessageBox.critical(self, "Update Error", f"Failed to launch installer: {e}")
 
     def open_wav(self):
         dlg = QFileDialog(self)
