@@ -15,17 +15,13 @@ if getattr(sys, 'frozen', False):
     app_dir = os.path.dirname(sys.executable)
     log_path = os.path.join(app_dir, "update_log.txt")
 
-logging.basicConfig(
-    filename=log_path,
-    level=logging.DEBUG,
-    format='%(asctime)s - %(levelname)s - %(message)s',
-    datefmt='%Y-%m-%d %H:%M:%S'
-)
-
-# Replace print statements with logging
-def log_print(message):
-    # logging.info(message)
-    pass
+# Logging to file disabled to prevent update_log.txt creation
+# logging.basicConfig(
+#     filename=log_path,
+#     level=logging.DEBUG,
+#     format='%(asctime)s - %(levelname)s - %(message)s',
+#     datefmt='%Y-%m-%d %H:%M:%S'
+# )
 
 # --- Compatibility shims for the frozen Windows build -----------------------
 # Ensure 'unittest' is always importable (PyInstaller one‑file may omit it)
@@ -182,7 +178,7 @@ def filename_from_url(url: str, default: str = "update.exe") -> str:
 def check_for_updates_async():  
     """Check for updates in a separate thread"""
     try:
-        current_version = "0.2.20"
+        current_version = "0.2.21"
         appcast_url = "https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml"
 
         update_info = parse_appcast_xml(appcast_url)
@@ -304,7 +300,7 @@ class Main(QMainWindow):
             _ws.win_sparkle_set_log_path.argtypes = [ctypes.c_wchar_p]
 
             _ws.win_sparkle_set_appcast_url("https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml")
-            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.20")
+            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.21")
             _ws.win_sparkle_set_verbosity_level(2)
             _ws.win_sparkle_set_log_path(WINSPARKLE_LOG_PATH)
             _ws.win_sparkle_init()
@@ -416,25 +412,20 @@ exit /b 0
 
     def download_update(self):
         """Download and install update - replaces old version with new versioned executable"""
-        log_print("\n--- STARTING UPDATE PROCESS ---")
         info = getattr(self, 'current_update_info', {})
         url = info.get('download_url')
         if not url:
-            log_print("Error: No download URL found in update info")
             return
 
         # Extract version info for display
         new_version = info.get('version', 'Unknown').replace('Version ', '').strip()
         file_size_mb = info.get('file_size', 0) / (1024*1024)
         size_text = f" ({file_size_mb:.1f} MB)" if file_size_mb > 0 else ""
-        log_print(f"Update info: version={new_version}, size={file_size_mb:.1f}MB")
 
         # Get current app info to show current version
         current_app_info = self._get_current_app_info()
         current_name = current_app_info['exe_path'].name
         new_exe_name = filename_from_url(url)
-        log_print(f"Current app: {current_name} (frozen: {current_app_info['is_frozen']})")
-        log_print(f"New exe name will be: {new_exe_name}")
 
         reply = QMessageBox.question(
             self,
@@ -451,13 +442,11 @@ exit /b 0
             QMessageBox.Yes
         )
         if reply != QMessageBox.Yes:
-            log_print("Update cancelled by user")
             return
 
         # Create path for new executable in temp directory
         if not new_exe_name:
             new_exe_name = f"AudioSpectroDemo-v{new_version}.exe"
-            log_print(f"Generated exe name: {new_exe_name}")
 
         # Use a safe suffix
         safe_suffix = "_" + new_exe_name.replace("?", "_")
@@ -467,7 +456,6 @@ exit /b 0
         )
         temp_new_exe.close()
         new_exe_temp_path = temp_new_exe.name
-        log_print(f"Temporary download location: {new_exe_temp_path}")
 
         # IMPORTANT: Reset the download cancelled flag before starting
         self._download_cancelled = False
@@ -494,7 +482,7 @@ exit /b 0
                     self._download_progress = None
                     logging.debug("Progress dialog closed safely")
                 except Exception as e:
-                    log_print(f"Error closing progress: {e}")
+                    pass
         
         def _hook(count, block_size, total_size):
             if self._download_cancelled:
@@ -511,48 +499,35 @@ exit /b 0
         try:
             # Add headers to avoid potential blocking
             req = urllib.request.Request(url)
-            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.20')
-            log_print(f"Starting download from URL: {url}")
+            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.21')
 
             # Actually perform the download
             urllib.request.urlretrieve(url, new_exe_temp_path, reporthook=_hook)
-            log_print("Download completed successfully")
             
             # Ensure progress dialog is closed - safely
             _safely_close_progress()
             
             # Force UI update
             QApplication.processEvents()
-            log_print("UI updated after download")
 
             # Only proceed with update if download was not cancelled
             if self._download_cancelled:
-                log_print("Download was cancelled, aborting update")
                 return
             
             # Additional safeguard: verify the download worked and file exists
             if not os.path.exists(new_exe_temp_path) or os.path.getsize(new_exe_temp_path) == 0:
-                log_print("ERROR: Download file is missing or empty")
                 QMessageBox.critical(self, "Update Error", "Downloaded file is missing or empty.")
                 return
 
             # Verify downloaded file
             file_size = os.path.getsize(new_exe_temp_path)
-            log_print(f"Verifying download: file_size={file_size} bytes")
             if file_size == 0:
                 raise Exception("Downloaded file is empty")
             elif file_size < 1000000:  # Less than 1MB seems too small for this app
                 raise Exception(f"Downloaded file seems too small ({file_size} bytes)")
 
-            # Debug output
-            log_print(f"Download details:")
-            log_print(f"  File: {new_exe_temp_path}")
-            log_print(f"  Size: {file_size} bytes")
-            log_print(f"  Target name: {new_exe_name}")
-
             # If running from source (not frozen), we cannot auto‑replace the script.
             if not current_app_info['is_frozen']:
-                log_print("Running from source - showing information dialog only")
                 QMessageBox.information(
                     self,
                     "Update downloaded",
@@ -564,83 +539,57 @@ exit /b 0
                 )
                 return
 
-            log_print("DEBUG: About to show success message")
             # Show success message with proper parent and modality
             msg_box = QMessageBox(self)
             msg_box.setWindowTitle("Update ready")
             msg_box.setText("The new version has been downloaded.\nAudioSpectroDemo will now restart.")
             msg_box.setStandardButtons(QMessageBox.Ok)
             msg_box.setModal(True)
-            
-            log_print("DEBUG: Showing message box")
             result = msg_box.exec()
-            
-            log_print(f"Message box result: {result} (QMessageBox.Ok={QMessageBox.Ok})")
 
             # Move (or overwrite) into the app folder
             final_path = os.path.join(str(current_app_info['app_dir']), new_exe_name)
-            log_print(f"Moving downloaded file to final location: {final_path}")
-            
             try:
-                log_print(f"Moving {new_exe_temp_path} to {final_path}")
                 if os.path.exists(final_path):
-                    log_print(f"Target file already exists, will be replaced")
-                    
+                    pass
                 # First check permissions
                 access_check = os.access(os.path.dirname(final_path), os.W_OK)
-                log_print(f"Destination directory writable: {access_check}")
-                    
                 try:
                     shutil.move(new_exe_temp_path, final_path)
-                    log_print("File move successful")
                 except PermissionError:
-                    log_print("Permission error, trying copy instead")
                     shutil.copy2(new_exe_temp_path, final_path)
                     os.remove(new_exe_temp_path)
-                    log_print("File copy successful, original temp file removed")
-                log_print("File move/copy completed")
-                
                 # Verify the file was actually moved
                 if os.path.exists(final_path):
-                    log_print(f"Final file exists at {final_path}, size: {os.path.getsize(final_path)}")
+                    pass
                 else:
-                    log_print("ERROR: Final file does not exist after move/copy!")
-                    
+                    pass
             except Exception as e:
                 error_msg = f"Failed to swap executable:\n{e}"
-                log_print(f"Error moving/copying file: {error_msg}")
                 QMessageBox.critical(self, "Update Error", error_msg)
                 try:
                     os.remove(new_exe_temp_path)
                 except Exception as e2:
-                    log_print(f"Error removing temp file: {e2}")
+                    pass
                 return
 
             # Launch the fresh version
-            log_print(f"DEBUG: Launching new version: {final_path}")
             try:
-                log_print("About to start subprocess")
                 new_process = subprocess.Popen([str(final_path)])
-                log_print(f"New process started with PID: {new_process.pid}")
                 # Remove old executable after launching new process
                 try:
                     old_exe = current_app_info['exe_path']
-                    log_print(f"Deleting old executable: {old_exe}")
                     if os.path.exists(old_exe):
                         os.remove(old_exe)
-                        log_print("Old executable deleted")
                 except Exception as e:
-                    log_print(f"Failed to delete old executable: {e}")
+                    pass
             except Exception as e:
-                log_print(f"Error launching new process: {e}")
                 QMessageBox.critical(self, "Launch Error", f"Failed to start new version: {e}")
                 return
 
             # Clean up and exit this (old) process
-            log_print("Preparing for update and exit")
             self._prepare_for_update()
             self._cleanup_old_versions()
-            log_print("Exiting old version")
             os._exit(0)
 
         except Exception as e:
@@ -654,7 +603,6 @@ exit /b 0
             
             if not self._download_cancelled:
                 error_msg = str(e)
-                log_print(f"Download error: {error_msg}")
                 if "HTTP Error" in error_msg:
                     error_msg += "\n\nThis might be a temporary network issue. Please try again later."
                 elif "SSL" in error_msg or "certificate" in error_msg.lower():
@@ -663,22 +611,19 @@ exit /b 0
             try:
                 os.remove(new_exe_temp_path)
             except Exception as e:
-                log_print(f"Error removing temp file: {e}")
+                pass
 
     def _cancel_download(self, file_path):
         """Handle download cancellation - legacy method"""
-        log_print("Download cancel requested by user (legacy method)")
         self._download_cancelled = True
         try:
             if os.path.exists(file_path):
                 os.remove(file_path)
-                log_print(f"Removed temporary file: {file_path}")
         except Exception as e:
-            log_print(f"Failed to remove temporary file: {e}")
+            pass
 
     def _handle_download_cancel(self):
         """Handle download cancellation from the progress dialog"""
-        log_print("Download cancel requested by user from progress dialog")
         self._download_cancelled = True
         
     def _launch_update_process(self, new_exe_temp_path, current_app_info):
@@ -937,15 +882,12 @@ exit /b 0
         """Handle download cancellation from the progress dialog"""
         # Only handle cancellation if download hasn't completed
         if not hasattr(self, '_download_completed') or not self._download_completed:
-            log_print("Download cancel requested by user from progress dialog")
             self._download_cancelled = True
-            
             # If we have a temp file path, try to clean it up later
             # Not cleaning up immediately as the file might still be in use
-            if hasattr(self, '_current_download_path') and self._current_download_path:
-                log_print(f"Will clean up temp file later: {self._current_download_path}")
+            pass
         else:
-            log_print("Ignoring cancellation signal - download already completed")
+            pass
 
 if __name__ == "__main__":
     try:
