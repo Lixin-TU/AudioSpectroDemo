@@ -159,7 +159,7 @@ def filename_from_url(url: str, default: str = "update.exe") -> str:
 def check_for_updates_async():
     """Check for updates in a separate thread"""
     try:
-        current_version = "0.2.19"
+        current_version = "0.2.18"
         appcast_url = "https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml"
 
         update_info = parse_appcast_xml(appcast_url)
@@ -262,7 +262,7 @@ class Main(QMainWindow):
             _ws.win_sparkle_set_log_path.argtypes = [ctypes.c_wchar_p]
 
             _ws.win_sparkle_set_appcast_url("https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml")
-            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.19")
+            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.18")
             _ws.win_sparkle_set_verbosity_level(2)
             _ws.win_sparkle_set_log_path(WINSPARKLE_LOG_PATH)
             _ws.win_sparkle_init()
@@ -330,161 +330,42 @@ class Main(QMainWindow):
                 'is_frozen': False,
                 'exe_name': script_path.name
             }
-
+    
     def _create_update_script(self, new_exe_path, current_app_info, final_exe_name):
-        """Create an update script that replaces old versioned executable with new one"""
+        """Create a batch script to move the new EXE into place and launch it."""
+        import tempfile
         current_exe = current_app_info['exe_path']
         app_dir = current_app_info['app_dir']
-
-        # Use the desired final executable name”
         new_exe_name = final_exe_name
         final_new_exe_path = os.path.join(str(app_dir), new_exe_name)
+        script_content = f"""@echo off
+REM AudioSpectroDemo Auto-Updater (Batch)
 
-        # Add current PID at the top of the function body
-        current_pid = os.getpid()
+setlocal ENABLEDELAYEDEXPANSION
+set "SRC={new_exe_path}"
+set "DST={final_new_exe_path}"
+set "OLD={current_exe}"
 
-        if platform.system() == "Windows":
-            # Generate a batch script for reliable update without PowerShell policies
-            script_content = f"""@echo off
-    rem AudioSpectroDemo Self-Update (batch)
-    set "currentExe={current_exe}"
-    set "tempNewExe={new_exe_path}"
-    set "finalNewExe={final_new_exe_path}"
-    set "backupExe=%currentExe%.backup"
-
-    rem Give the main app time to exit
-    ping 127.0.0.1 -n 3 >nul
-
-    rem Retry moving the new EXE (max 30 attempts)
-    setlocal enabledelayedexpansion
-    for /L %%i in (1,1,30) do (
-        if exist "!tempNewExe!" (
-            move /Y "!tempNewExe!" "!finalNewExe!" && goto moved
-        )
-        ping 127.0.0.1 -n 2 >nul
-    )
-    echo ERROR: Could not move new executable
-    exit /b 1
-    :moved
-
-    rem Remove old version (ignore errors)
-    del /F /Q "%currentExe%" >nul 2>&1
-
-    rem Launch the new version
-    start "" "%finalNewExe%"
-
-    rem Cleanup backup after launch
+REM Wait for the old EXE to exit and unlock (max 30 attempts, 30*0.7s)
+for /L %%i in (1,1,30) do (
     ping 127.0.0.1 -n 2 >nul
-    del /F /Q "%backupExe%" >nul 2>&1
-
-    exit /b 0
-    """
-            script_file = tempfile.NamedTemporaryFile(
-                mode='w',
-                suffix='.bat',
-                delete=False,
-                encoding='utf-8'
-            )
-            script_file.write(script_content)
-            script_file.close()
-            return script_file.name, 'batch'
-        else:
-            script_content = f'''#!/bin/bash
-echo "Starting update process..."
-
-sleep 3
-
-CURRENT_EXE="{current_exe}"
-CURRENT_PID={current_pid}
-echo "Waiting for main process PID $CURRENT_PID to exit..."
-if command -v tail >/dev/null 2>&1; then
-    # Busy‑wait with a timeout (30 s)
-    for i in $(seq 1 30); do
-        if ps -p "$CURRENT_PID" >/dev/null 2>&1; then
-            sleep 1
-        else
-            break
-        fi
-    done
-fi
-TEMP_NEW_EXE="{new_exe_path}"
-FINAL_NEW_EXE="{final_new_exe_path}"
-BACKUP_EXE="$CURRENT_EXE.backup"
-
-echo "Current executable: $CURRENT_EXE"
-echo "Downloaded executable: $TEMP_NEW_EXE"
-echo "Final new executable: $FINAL_NEW_EXE"
-
-# Verify new executable exists and is valid
-if [ ! -f "$TEMP_NEW_EXE" ]; then
-    echo "Error: Downloaded executable not found at $TEMP_NEW_EXE"
-    exit 1
-fi
-
-NEW_SIZE=$(stat -f%z "$TEMP_NEW_EXE" 2>/dev/null || stat -c%s "$TEMP_NEW_EXE" 2>/dev/null)
-if [ "$NEW_SIZE" -lt 1000000 ]; then  # Less than 1MB seems too small
-    echo "Error: Downloaded executable seems too small ($NEW_SIZE bytes)"
-    exit 1
-fi
-
-echo "Backing up current executable..."
-if ! cp "$CURRENT_EXE" "$BACKUP_EXE"; then
-    echo "Error creating backup"
-    exit 1
-fi
-echo "Backup created successfully"
-
-echo "Moving new executable to application directory..."
-if ! mv "$TEMP_NEW_EXE" "$FINAL_NEW_EXE"; then
-    echo "Error moving new executable"
-    exit 1
-fi
-
-chmod +x "$FINAL_NEW_EXE"
-echo "New executable moved successfully"
-
-echo "Removing old executable..."
-if ! rm -f "$CURRENT_EXE"; then
-    echo "Warning: Could not remove old executable"
-    # This is not critical, continue with launch
-fi
-echo "Old executable removed"
-
-echo "Launching updated application..."
-if ! "$FINAL_NEW_EXE" &; then
-    echo "Error launching updated application"
-    # Try to restore backup if launch fails
-    if [ -f "$BACKUP_EXE" ]; then
-        echo "Restoring backup due to launch failure..."
-        mv "$BACKUP_EXE" "$CURRENT_EXE"
-        rm -f "$FINAL_NEW_EXE"
-        chmod +x "$CURRENT_EXE"
-        "$CURRENT_EXE" &
-        echo "Backup restored and launched"
-    fi
-else
-    echo "Updated application launched successfully"
-fi
-
-# Clean up
-echo "Cleaning up temporary files..."
-sleep 2
-rm -f "$BACKUP_EXE"
-
-# Remove this script itself
-sleep 1
-rm -f "$0"
-echo "Update process completed"
-'''
-            script_file = tempfile.NamedTemporaryFile(
-                mode='w',
-                suffix='.sh',
-                delete=False
-            )
-            script_file.write(script_content)
-            script_file.close()
-            os.chmod(script_file.name, 0o755)
-            return script_file.name, 'bash'
+    ren "!OLD!" "!OLD!.tmp" >nul 2>&1 && goto moved
+)
+echo ERROR: Old EXE did not exit in 30s
+exit /b 1
+:moved
+move /Y "!SRC!" "!DST!" >nul
+del /F /Q "!OLD!.tmp" >nul 2>&1
+start "" "!DST!"
+del "%~f0"
+exit /b 0
+"""
+        script_file = tempfile.NamedTemporaryFile(
+            mode='w', suffix='.bat', delete=False, encoding='utf-8'
+        )
+        script_file.write(script_content)
+        script_file.close()
+        return script_file.name, 'batch'
 
     def download_update(self):
         """Download and install update - replaces old version with new versioned executable"""
@@ -558,7 +439,7 @@ echo "Update process completed"
         try:
             # Add headers to avoid potential blocking
             req = urllib.request.Request(url)
-            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.19')
+            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.18')
             
             urllib.request.urlretrieve(url, new_exe_temp_path, reporthook=_hook)
             progress.close()
@@ -638,28 +519,22 @@ echo "Update process completed"
             # Prepare for shutdown
             self._prepare_for_update()
             
-            # Launch update script
-            if script_type == 'powershell':
-                # Use PowerShell on Windows
+            if script_type == 'batch':
                 subprocess.Popen([
-                    'powershell', 
+                    'cmd', '/c', script_path
+                ], creationflags=subprocess.CREATE_NO_WINDOW)
+                os._exit(0)
+            elif script_type == 'powershell':
+                subprocess.Popen([
+                    'powershell',
                     '-WindowStyle', 'Hidden',
                     '-ExecutionPolicy', 'Bypass',
                     '-File', script_path
                 ], creationflags=subprocess.CREATE_NO_WINDOW)
-            elif script_type == 'batch':
-                # Use cmd to run the batch script
-                subprocess.Popen([
-                    'cmd', '/c', script_path
-                ], creationflags=subprocess.CREATE_NO_WINDOW)
+                os._exit(0)
             else:
-                # Use bash on Unix systems
                 subprocess.Popen(['/bin/bash', script_path])
-            
-            # Close the application after a short delay
-            QTimer.singleShot(500, lambda: QApplication.quit())
-            # Hard‑exit a moment later to guarantee the file handle is released
-            QTimer.singleShot(1500, lambda: os._exit(0))
+                os._exit(0)
             
         except Exception as e:
             error_msg = f"Failed to launch update process: {e}"
