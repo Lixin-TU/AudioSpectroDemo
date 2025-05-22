@@ -52,7 +52,7 @@ jobs:
       - name: Build Windows EXE
         shell: bash
         run: |
-          pyinstaller --noconfirm --noconsole --onefile main.py \
+          pyinstaller --noconfirm --onefile main.py \
                       --name AudioSpectroDemo \
                       --add-data "WinSparkle.dll;." \
                       --runtime-tmpdir . \

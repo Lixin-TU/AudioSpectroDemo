@@ -481,12 +481,31 @@ exit /b 0
                 raise Exception("Downloaded file is empty")
             elif file_size < 1000000:  # Less than 1MB seems too small for this app
                 raise Exception(f"Downloaded file seems too small ({file_size} bytes)")
-            
+
+            # If running from source (not frozen), we cannot auto‑replace the script.
+            if not current_app_info['is_frozen']:
+                QMessageBox.information(
+                    self,
+                    "Update downloaded",
+                    "The update was downloaded to:\n"
+                    f"{new_exe_temp_path}\n\n"
+                    "Because you're running the Python source in VS Code, "
+                    "the auto‑update step is skipped.\n"
+                    "Run the packaged EXE to enable one‑click updates."
+                )
+                return
+
             print(f"Downloaded new executable to: {new_exe_temp_path}")
             print(f"File size: {file_size} bytes")
             print(f"New executable name: {new_exe_name}")
             print(f"Current executable: {current_app_info['exe_path']}")
-            
+
+            QMessageBox.information(
+                self,
+                "Update debug",
+                "Download verified – attempting to swap executables now."
+            )
+
             # ----------------------------------------------------
             # SIMPLE IN‑PLACE UPDATE (move file, restart, clean up)
             final_path = current_app_info['app_dir'] / new_exe_name
