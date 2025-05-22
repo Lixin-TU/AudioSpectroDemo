@@ -37,6 +37,7 @@ import librosa
 import threading
 import xml.etree.ElementTree as ET
 import urllib.request
+from urllib.parse import urlsplit, unquote
 import subprocess
 import tempfile
 from datetime import datetime
@@ -141,11 +142,24 @@ def parse_appcast_xml(url):
         print(f"Error parsing appcast: {e}")
         return None
 
+# ---------------------------------------------------------------------------
+# Helper: safely extract a usable filename from a download URL (strips
+# query‑string parameters like “?raw=true” that break Windows paths)
+def filename_from_url(url: str, default: str = "update.exe") -> str:
+
+    try:
+        path = urlsplit(url).path         
+        name = os.path.basename(unquote(path))
+        return name or default
+    except Exception:
+        return default
+# ---------------------------------------------------------------------------
+
 
 def check_for_updates_async():
     """Check for updates in a separate thread"""
     try:
-        current_version = "0.2.19"
+        current_version = "0.2.18"
         appcast_url = "https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml"
 
         update_info = parse_appcast_xml(appcast_url)
@@ -248,7 +262,7 @@ class Main(QMainWindow):
             _ws.win_sparkle_set_log_path.argtypes = [ctypes.c_wchar_p]
 
             _ws.win_sparkle_set_appcast_url("https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml")
-            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.19")
+            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.18")
             _ws.win_sparkle_set_verbosity_level(2)
             _ws.win_sparkle_set_log_path(WINSPARKLE_LOG_PATH)
             _ws.win_sparkle_init()
@@ -321,96 +335,108 @@ class Main(QMainWindow):
         """Create an update script that replaces old versioned executable with new one"""
         current_exe = current_app_info['exe_path']
         app_dir = current_app_info['app_dir']
-        
+
         # Use the desired final executable name”
         new_exe_name = final_exe_name
         final_new_exe_path = os.path.join(str(app_dir), new_exe_name)
-        
+
+        # Add current PID at the top of the function body
+        current_pid = os.getpid()
+
         if platform.system() == "Windows":
             script_content = f'''
-# AudioSpectroDemo Self‑Update Script
-Write-Host "Starting update process..."
+ # AudioSpectroDemo Self‑Update Script (auto‑generated)
+ param()
 
-# Give the main application enough time to shut down
-Start-Sleep -Seconds 3
+ Write-Host "Starting update process..."
 
-$currentExe = "{current_exe}"
-$tempNewExe = "{new_exe_path}"
-$finalNewExe = "{final_new_exe_path}"
-$backupExe = "$currentExe.backup"
+ #------------------------------------------------------------------------
+ # VARIABLES (auto‑filled by the running application)
+ $currentExe    = "{current_exe}"
+ $tempNewExe    = "{new_exe_path}"
+ $finalNewExe   = "{final_new_exe_path}"
+ $backupExe     = "$currentExe.backup"
+ $mainPid       = {current_pid}
+ #------------------------------------------------------------------------
 
-Write-Host "Current executable: $currentExe"
-Write-Host "Downloaded executable: $tempNewExe"
-Write-Host "Final new executable: $finalNewExe"
+ # Give the main application a moment to shut down
+ Start-Sleep -Seconds 2
 
-# Verify new executable exists and is valid
-if (-not (Test-Path $tempNewExe)) {{
-    Write-Host "Error: Downloaded executable not found at $tempNewExe"
-    exit 1
-}}
+ Write-Host "Waiting for main process PID $mainPid to exit..."
+ try {{
+     Wait-Process -Id $mainPid -Timeout 30
+ }} catch {{
+     # Ignore timeout (we'll retry via Move‑Item loop)
+ }}
 
-$newSize = (Get-Item $tempNewExe).Length
-if ($newSize -lt 1000000) {{  # Less than 1MB seems too small
-    Write-Host "Error: Downloaded executable seems too small ($newSize bytes)"
-    exit 1
-}}
+ Write-Host "Current executable: $currentExe"
+ Write-Host "Downloaded executable: $tempNewExe"
+ Write-Host "Final new executable: $finalNewExe"
 
-Write-Host "Backing up current executable..."
-try {{
-    Copy-Item $currentExe $backupExe -Force
-    Write-Host "Backup created successfully"
-}} catch {{
-    Write-Host "Error creating backup: $($_.Exception.Message)"
-    exit 1
-}}
+ # Verify new executable exists and has plausible size
+ if (-not (Test-Path $tempNewExe)) {{
+     Write-Host "ERROR: Downloaded executable not found at $tempNewExe"
+     exit 1
+ }}
+ $newSize = (Get-Item $tempNewExe).Length
+ if ($newSize -lt 2000000) {{  # < 2 MB almost certainly a bad download
+     Write-Host "ERROR: Downloaded executable too small ($newSize bytes)"
+     exit 1
+ }}
 
-Write-Host "Moving new executable to application directory..."
-try {{
-    # Move the new executable to the app directory with its new name
-    Move-Item $tempNewExe $finalNewExe -Force
-    Write-Host "New executable moved successfully"
-}} catch {{
-    Write-Host "Error moving new executable: $($_.Exception.Message)"
-    exit 1
-}}
+ # Backup current exe (best effort)
+ try {{
+     Copy-Item $currentExe $backupExe -Force
+     Write-Host "Backup created at $backupExe"
+ }} catch {{
+     Write-Host "WARNING: Could not create backup – $($_.Exception.Message)"
+ }}
 
-Write-Host "Removing old executable..."
-try {{
-    Remove-Item $currentExe -Force
-    Write-Host "Old executable removed successfully"
-}} catch {{
-    Write-Host "Warning: Could not remove old executable: $($_.Exception.Message)"
-    # This is not critical, continue with launch
-}}
+ # Move new exe into place – retry while old file may still be locked
+ $maxRetry = 30
+ $moved = $false
+ for ($i = 0; $i -lt $maxRetry -and -not $moved; $i++) {{
+     try {{
+         Move-Item $tempNewExe $finalNewExe -Force
+         $moved = $true
+     }} catch {{
+         Start-Sleep -Milliseconds 700
+     }}
+ }}
+ if (-not $moved) {{
+     Write-Host "ERROR: Could not move new executable after $maxRetry attempts"
+     exit 1
+ }}
 
-Write-Host "Launching updated application..."
-try {{
-    Start-Process -FilePath $finalNewExe
-    Write-Host "Updated application launched successfully"
-}} catch {{
-    Write-Host "Error launching updated application: $($_.Exception.Message)"
-    # Try to restore backup if launch fails
-    if (Test-Path $backupExe) {{
-        Write-Host "Restoring backup due to launch failure..."
-        Copy-Item $backupExe $currentExe -Force
-        Remove-Item $finalNewExe -Force -ErrorAction SilentlyContinue
-        Start-Process -FilePath $currentExe
-        Write-Host "Backup restored and launched"
-    }}
-}}
+ # Remove the Mark‑of‑the‑Web (SmartScreen) so launch doesn’t get blocked
+ try {{ Unblock-File -Path $finalNewExe }} catch {{ }}
 
-# Clean up
-Write-Host "Cleaning up temporary files..."
-Start-Sleep -Seconds 2
-Remove-Item $backupExe -Force -ErrorAction SilentlyContinue
+ # Remove old version (ignore errors – the file might still be in use)
+ try {{ Remove-Item $currentExe -Force }} catch {{ }}
 
-# Remove this script
-Remove-Item $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
-Write-Host "Update process completed"
-'''
+ Write-Host "Launching updated application..."
+ try {{
+     Start-Process -FilePath $finalNewExe
+     Write-Host "Updated application launched"
+ }} catch {{
+     Write-Host "ERROR: Launch failed – $($_.Exception.Message)"
+     if (Test-Path $backupExe) {{
+         Write-Host "Restoring backup..."
+         Copy-Item $backupExe $currentExe -Force
+         Start-Process -FilePath $currentExe
+     }}
+ }}
+
+ # House‑keeping
+ Start-Sleep -Seconds 2
+ try {{ Remove-Item $backupExe -Force }} catch {{ }}
+ try {{ Remove-Item $MyInvocation.MyCommand.Path -Force }} catch {{ }}
+
+ Write-Host "Update script completed"
+ '''
             script_file = tempfile.NamedTemporaryFile(
-                mode='w', 
-                suffix='.ps1', 
+                mode='w',
+                suffix='.ps1',
                 delete=False,
                 encoding='utf-8'
             )
@@ -424,6 +450,18 @@ echo "Starting update process..."
 sleep 3
 
 CURRENT_EXE="{current_exe}"
+CURRENT_PID={current_pid}
+echo "Waiting for main process PID $CURRENT_PID to exit..."
+if command -v tail >/dev/null 2>&1; then
+    # Busy‑wait with a timeout (30 s)
+    for i in $(seq 1 30); do
+        if ps -p "$CURRENT_PID" >/dev/null 2>&1; then
+            sleep 1
+        else
+            break
+        fi
+    done
+fi
 TEMP_NEW_EXE="{new_exe_path}"
 FINAL_NEW_EXE="{final_new_exe_path}"
 BACKUP_EXE="$CURRENT_EXE.backup"
@@ -494,8 +532,8 @@ rm -f "$0"
 echo "Update process completed"
 '''
             script_file = tempfile.NamedTemporaryFile(
-                mode='w', 
-                suffix='.sh', 
+                mode='w',
+                suffix='.sh',
                 delete=False
             )
             script_file.write(script_content)
@@ -518,7 +556,7 @@ echo "Update process completed"
         # Get current app info to show current version
         current_app_info = self._get_current_app_info()
         current_name = current_app_info['exe_path'].name
-        new_exe_name = os.path.basename(url)
+        new_exe_name = filename_from_url(url)
         
         reply = QMessageBox.question(
             self, 
@@ -539,12 +577,13 @@ echo "Update process completed"
         
         # Create path for new executable in temp directory
         # Keep the original filename from URL for the download
-        new_exe_name = os.path.basename(url)
         if not new_exe_name:
             new_exe_name = f"AudioSpectroDemo-v{new_version}.exe"
-        
+
+        # Use a safe suffix (replace chars that Windows forbids, e.g. '?')
+        safe_suffix = "_" + new_exe_name.replace("?", "_")
         temp_new_exe = tempfile.NamedTemporaryFile(
-            suffix=f"_{new_exe_name}", 
+            suffix=safe_suffix,
             delete=False
         )
         temp_new_exe.close()
@@ -574,7 +613,7 @@ echo "Update process completed"
         try:
             # Add headers to avoid potential blocking
             req = urllib.request.Request(url)
-            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.19')
+            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.18')
             
             urllib.request.urlretrieve(url, new_exe_temp_path, reporthook=_hook)
             progress.close()
@@ -625,8 +664,8 @@ echo "Update process completed"
     def _launch_update_process(self, new_exe_temp_path, current_app_info):
         """Launch the update process using a script"""
         # Determine the target filename of the new executable (without the temporary prefix)
-        dest_exe_name = os.path.basename(
-            self.current_update_info.get("download_url", os.path.basename(new_exe_temp_path))
+        dest_exe_name = filename_from_url(
+            self.current_update_info.get("download_url", "")
         )
         try:
             # Create update script
@@ -669,6 +708,8 @@ echo "Update process completed"
             
             # Close the application after a short delay
             QTimer.singleShot(500, lambda: QApplication.quit())
+            # Hard‑exit a moment later to guarantee the file handle is released
+            QTimer.singleShot(1500, lambda: os._exit(0))
             
         except Exception as e:
             error_msg = f"Failed to launch update process: {e}"
