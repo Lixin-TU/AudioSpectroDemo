@@ -13,7 +13,7 @@ import urllib.request
 import subprocess
 import tempfile
 from datetime import datetime
-import shutil
+from concurrent.futures import ThreadPoolExecutor
 
 from PySide6.QtWidgets import (
     QApplication,
@@ -27,8 +27,9 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QLabel,
     QSlider,
+    QMessageBox,
 )
-from PySide6.QtCore import Qt, QTimer, Signal, QObject
+from PySide6.QtCore import Qt, QTimer, Signal, QObject, QThread
 import pyqtgraph as pg
 from pyqtgraph import PlotWidget, ImageItem
 
@@ -53,6 +54,28 @@ class UpdateChecker(QObject):
 
 # Global update checker instance
 update_checker = UpdateChecker()
+
+# Audio processing worker thread
+class AudioProcessor(QThread):
+    progress_updated = Signal(int)
+    processing_complete = Signal(list)
+    processing_error = Signal(str)
+    
+    def __init__(self, files):
+        super().__init__()
+        self.files = files
+        
+    def run(self):
+        try:
+            from dsp.mel import wav_to_mel_image
+            spectrograms = []
+            for i, fp in enumerate(self.files):
+                self.progress_updated.emit(i)
+                img = wav_to_mel_image(fp)
+                spectrograms.append((fp, img))
+            self.processing_complete.emit(spectrograms)
+        except Exception as e:
+            self.processing_error.emit(str(e))
 
 def parse_appcast_xml(url):
     """Parse the appcast XML to get update information"""
@@ -95,7 +118,7 @@ def parse_appcast_xml(url):
 def check_for_updates_async():
     """Check for updates in a separate thread"""
     try:
-        current_version = "0.2.12"
+        current_version = "0.2.13"
         appcast_url = "https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml"
 
         update_info = parse_appcast_xml(appcast_url)
@@ -133,8 +156,8 @@ class Main(QMainWindow):
         super().__init__()
         self.setWindowTitle("AudioSpectroDemo")
         self._session_temp_files: list[str] = []
-        self._session_temp_dirs: list[str] = []
         self.resize(900, 600)
+        self.audio_processor = None
 
         self._init_winsparkle()
         self._build_ui()
@@ -197,7 +220,7 @@ class Main(QMainWindow):
             _ws.win_sparkle_set_log_path.argtypes = [ctypes.c_wchar_p]
 
             _ws.win_sparkle_set_appcast_url("https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml")
-            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.12")
+            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.13")
             _ws.win_sparkle_set_verbosity_level(2)
             _ws.win_sparkle_set_log_path(WINSPARKLE_LOG_PATH)
             _ws.win_sparkle_init()
@@ -245,55 +268,48 @@ class Main(QMainWindow):
         self.update_label.setStyleSheet("color: #F44336; font-size: 12px; padding: 5px;")
 
     def download_update(self):
-        """Download update, show progress, remove old, and launch new."""
+        """Download and install update directly without creating temp directories"""
         info = getattr(self, 'current_update_info', {})
         url = info.get('download_url')
         if not url:
             return
 
-        progress = QProgressDialog("Starting update...", None, 0, 3, self)
+        # Create a single temp file for the installer
+        installer_name = os.path.basename(url)
+        temp_installer = tempfile.NamedTemporaryFile(
+            suffix=f"_{installer_name}", 
+            delete=False
+        )
+        temp_installer.close()
+        installer_path = temp_installer.name
+
+        progress = QProgressDialog("Downloading update...", None, 0, 100, self)
         progress.setWindowModality(Qt.WindowModal)
         progress.setAutoClose(False)
         progress.setValue(0)
         QApplication.processEvents()
 
-        # Step 1: Download
-        progress.setLabelText("Downloading update...")
-        temp_dir = tempfile.mkdtemp(prefix="audiospec_update_")
-        installer_name = os.path.basename(url)
-        installer_path = os.path.join(temp_dir, installer_name)
-
         def _hook(count, block_size, total_size):
-            pct = int(count * block_size * 100 / total_size) if total_size > 0 else 0
-            progress.setValue(min(pct, 100))
-            QApplication.processEvents()
+            if total_size > 0:
+                pct = int(count * block_size * 100 / total_size)
+                progress.setValue(min(pct, 100))
+                QApplication.processEvents()
 
-        urllib.request.urlretrieve(url, installer_path, reporthook=_hook)
-        progress.setValue(1)
-
-        # Step 2: Prepare updater
-        progress.setLabelText("Preparing updater...")
-        QApplication.processEvents()
-        old_exe = sys.executable
-        bat_path = os.path.join(temp_dir, "apply_update.bat")
-        with open(bat_path, "w", encoding="utf-8") as bat:
-            bat.write(f"""@echo off
-ping 127.0.0.1 -n 5 >nul
-rd /s /q \"{os.path.dirname(old_exe)}\"
-start "" \"{installer_path}\"
-del "%~f0"
-""" )
-        progress.setValue(2)
-
-        # Step 3: Launch new version
-        progress.setLabelText("Launching new version...")
-        QApplication.processEvents()
-        subprocess.Popen(["cmd", "/c", bat_path], shell=False)
-        progress.setValue(3)
-
-        time.sleep(0.5)
-        progress.close()
-        QApplication.quit()
+        try:
+            urllib.request.urlretrieve(url, installer_path, reporthook=_hook)
+            progress.close()
+            
+            # Launch installer directly
+            subprocess.Popen([installer_path], shell=False)
+            QApplication.quit()
+            
+        except Exception as e:
+            progress.close()
+            QMessageBox.critical(self, "Update Error", f"Failed to download update: {e}")
+            try:
+                os.remove(installer_path)
+            except:
+                pass
 
     def open_wav(self):
         dlg = QFileDialog(self)
@@ -305,53 +321,90 @@ del "%~f0"
         if not files:
             return
 
-        progress = QProgressDialog("Processing audio...", None, 0, len(files), self)
-        progress.setWindowModality(Qt.WindowModal)
-        progress.setCancelButton(None)
-        progress.show()
+        # Disable UI during processing
+        self.open_btn.setEnabled(False)
+        self.export_checkbox.setEnabled(False)
+
+        # Create progress dialog
+        self.progress = QProgressDialog("Processing audio...", "Cancel", 0, len(files), self)
+        self.progress.setWindowModality(Qt.WindowModal)
+        self.progress.show()
         QApplication.processEvents()
 
-        spectrograms = []
-        for i, fp in enumerate(files):
-            progress.setValue(i)
+        # Start audio processing in separate thread
+        self.audio_processor = AudioProcessor(files)
+        self.audio_processor.progress_updated.connect(self.on_audio_progress)
+        self.audio_processor.processing_complete.connect(self.on_audio_complete)
+        self.audio_processor.processing_error.connect(self.on_audio_error)
+        self.progress.canceled.connect(self.cancel_processing)
+        self.audio_processor.start()
+
+    def on_audio_progress(self, value):
+        if hasattr(self, 'progress'):
+            self.progress.setValue(value)
             QApplication.processEvents()
-            img = wav_to_mel_image(fp)
-            spectrograms.append((fp, img))
-        progress.close()
 
+    def cancel_processing(self):
+        if self.audio_processor and self.audio_processor.isRunning():
+            self.audio_processor.terminate()
+            self.audio_processor.wait()
+        self.cleanup_processing()
+
+    def cleanup_processing(self):
+        # Re-enable UI
+        self.open_btn.setEnabled(True)
+        self.export_checkbox.setEnabled(True)
+        prog = getattr(self, 'progress', None)
+        if prog is not None:
+            prog.close()
+            # keep the attribute but clear it to avoid double‑deletion issues
+            self.progress = None
+
+    def on_audio_error(self, error_msg):
+        self.cleanup_processing()
+        QMessageBox.critical(self, "Processing Error", f"Failed to process audio: {error_msg}")
+
+    def on_audio_complete(self, spectrograms):
+        self.cleanup_processing()
+        
         if self.export_checkbox.isChecked():
-            for wav_path, img in spectrograms:
-                norm = img - img.min()
-                if norm.max() > 0:
-                    norm = norm / norm.max()
-                inds = (norm * 255).astype(np.uint8)
-                rgb = LUT[inds]
-                hop = 512
-                export_dir = os.path.join(os.path.dirname(wav_path), "spectrograms")
-                os.makedirs(export_dir, exist_ok=True)
-                if export_dir not in self._session_temp_dirs:
-                    self._session_temp_dirs.append(export_dir)
-                duration_min = rgb.shape[1] * hop / TARGET_SR / 60.0
+            self.export_spectrograms(spectrograms)
 
-                fig = plt.figure(figsize=(EXPORT_W/300, EXPORT_H/300), dpi=300)
-                ax = fig.add_subplot(111)
-                fig.subplots_adjust(left=0.08, right=0.98, top=0.92, bottom=0.12)
-                ax.imshow(np.flipud(rgb), aspect='auto',extent=[0, duration_min, 0, MAX_FREQ], origin='lower')
-                ax.set_xlabel("Time (min)",fontsize=3)
-                ax.set_ylabel("Frequency (kHz)",fontsize=3)
-                freqs=[0,2000,4000,6000,10000,12000,14000,16000]
-                ax.set_yticks(freqs)
-                ax.set_yticklabels([_hz_to_k_label(f) for f in freqs],fontsize=3)
-                ax.set_ylim(0, MAX_FREQ)
-                ax.tick_params(axis="both",which="both",direction="in",color="0.6",width=0.4,length=3,labelsize=3)
-                for spine in ax.spines.values(): spine.set_linewidth(0.4); spine.set_color("0.6")
-                ax.set_title(os.path.basename(wav_path),fontsize=5,pad=4)
-                png = os.path.join(export_dir, os.path.splitext(os.path.basename(wav_path))[0] + ".png")
-                fig.savefig(png,dpi=300,bbox_inches="tight",pad_inches=0.01)
-                self._session_temp_files.append(png)
-                plt.close(fig)
+        # Show viewer dialog
+        self.show_spectrogram_viewer(spectrograms)
 
-        # Viewer dialog (unchanged)
+    def export_spectrograms(self, spectrograms):
+        """Export spectrograms to PNG files"""
+        for wav_path, img in spectrograms:
+            norm = img - img.min()
+            if norm.max() > 0:
+                norm = norm / norm.max()
+            inds = (norm * 255).astype(np.uint8)
+            rgb = LUT[inds]
+            hop = 512
+            export_dir = os.path.join(os.path.dirname(wav_path), "spectrograms")
+            os.makedirs(export_dir, exist_ok=True)
+            duration_min = rgb.shape[1] * hop / TARGET_SR / 60.0
+
+            fig = plt.figure(figsize=(EXPORT_W/300, EXPORT_H/300), dpi=300)
+            ax = fig.add_subplot(111)
+            fig.subplots_adjust(left=0.08, right=0.98, top=0.92, bottom=0.12)
+            ax.imshow(np.flipud(rgb), aspect='auto',extent=[0, duration_min, 0, MAX_FREQ], origin='lower')
+            ax.set_xlabel("Time (min)",fontsize=3)
+            ax.set_ylabel("Frequency (kHz)",fontsize=3)
+            freqs=[0,2000,4000,6000,10000,12000,14000,16000]
+            ax.set_yticks(freqs)
+            ax.set_yticklabels([_hz_to_k_label(f) for f in freqs],fontsize=3)
+            ax.set_ylim(0, MAX_FREQ)
+            ax.tick_params(axis="both",which="both",direction="in",color="0.6",width=0.4,length=3,labelsize=3)
+            for spine in ax.spines.values(): spine.set_linewidth(0.4); spine.set_color("0.6")
+            ax.set_title(os.path.basename(wav_path),fontsize=5,pad=4)
+            png = os.path.join(export_dir, os.path.splitext(os.path.basename(wav_path))[0] + ".png")
+            fig.savefig(png,dpi=300,bbox_inches="tight",pad_inches=0.01)
+            plt.close(fig)
+
+    def show_spectrogram_viewer(self, spectrograms):
+        """Show the spectrogram viewer dialog"""
         dialog = QDialog(self)
         dialog.setWindowTitle("Spectrogram Viewer")
         main_layout = QVBoxLayout(dialog)
@@ -377,6 +430,8 @@ del "%~f0"
         from PySide6.QtGui import QTransform
         index=0
         def update(idx):
+            nonlocal index
+            index = idx
             pw.clear()
             fp,img = spectrograms[idx]
             db=slider.value(); img_f=img.astype(np.float32)/255.0
@@ -402,17 +457,17 @@ del "%~f0"
 
     def closeEvent(self,event):
         global _ws
+        # Cancel any running audio processing
+        if self.audio_processor and self.audio_processor.isRunning():
+            self.audio_processor.terminate()
+            self.audio_processor.wait()
+            
         if platform.system()=="Windows" and _ws:
             try: _ws.win_sparkle_cleanup()
             except: pass
         for p in self._session_temp_files:
             try: os.remove(p)
             except: pass
-        for d in self._session_temp_dirs:
-            try:
-                shutil.rmtree(d, ignore_errors=True)
-            except:
-                pass
         super().closeEvent(event)
 
 if __name__ == "__main__":
