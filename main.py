@@ -159,7 +159,7 @@ def filename_from_url(url: str, default: str = "update.exe") -> str:
 def check_for_updates_async():
     """Check for updates in a separate thread"""
     try:
-        current_version = "0.2.19"
+        current_version = "0.2.18"
         appcast_url = "https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml"
 
         update_info = parse_appcast_xml(appcast_url)
@@ -262,7 +262,7 @@ class Main(QMainWindow):
             _ws.win_sparkle_set_log_path.argtypes = [ctypes.c_wchar_p]
 
             _ws.win_sparkle_set_appcast_url("https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml")
-            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.19")
+            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.18")
             _ws.win_sparkle_set_verbosity_level(2)
             _ws.win_sparkle_set_log_path(WINSPARKLE_LOG_PATH)
             _ws.win_sparkle_init()
@@ -344,105 +344,50 @@ class Main(QMainWindow):
         current_pid = os.getpid()
 
         if platform.system() == "Windows":
-            script_content = f'''
- # AudioSpectroDemo Self‑Update Script (auto‑generated)
- param()
+            # Generate a batch script for reliable update without PowerShell policies
+            script_content = f"""@echo off
+    rem AudioSpectroDemo Self-Update (batch)
+    set "currentExe={current_exe}"
+    set "tempNewExe={new_exe_path}"
+    set "finalNewExe={final_new_exe_path}"
+    set "backupExe=%currentExe%.backup"
 
- Write-Host "Starting update process..."
+    rem Give the main app time to exit
+    ping 127.0.0.1 -n 3 >nul
 
- #------------------------------------------------------------------------
- # VARIABLES (auto‑filled by the running application)
- $currentExe    = "{current_exe}"
- $tempNewExe    = "{new_exe_path}"
- $finalNewExe   = "{final_new_exe_path}"
- $backupExe     = "$currentExe.backup"
- $mainPid       = {current_pid}
- #------------------------------------------------------------------------
+    rem Retry moving the new EXE (max 30 attempts)
+    setlocal enabledelayedexpansion
+    for /L %%i in (1,1,30) do (
+        if exist "!tempNewExe!" (
+            move /Y "!tempNewExe!" "!finalNewExe!" && goto moved
+        )
+        ping 127.0.0.1 -n 2 >nul
+    )
+    echo ERROR: Could not move new executable
+    exit /b 1
+    :moved
 
- # Give the main application a moment to shut down
- Start-Sleep -Seconds 2
+    rem Remove old version (ignore errors)
+    del /F /Q "%currentExe%" >nul 2>&1
 
- Write-Host "Waiting for main process PID $mainPid to exit..."
- try {{
-     Wait-Process -Id $mainPid -Timeout 30
- }} catch {{
-     # Ignore timeout (we'll retry via Move‑Item loop)
- }}
+    rem Launch the new version
+    start "" "%finalNewExe%"
 
- Write-Host "Current executable: $currentExe"
- Write-Host "Downloaded executable: $tempNewExe"
- Write-Host "Final new executable: $finalNewExe"
+    rem Cleanup backup after launch
+    ping 127.0.0.1 -n 2 >nul
+    del /F /Q "%backupExe%" >nul 2>&1
 
- # Verify new executable exists and has plausible size
- if (-not (Test-Path $tempNewExe)) {{
-     Write-Host "ERROR: Downloaded executable not found at $tempNewExe"
-     exit 1
- }}
- $newSize = (Get-Item $tempNewExe).Length
- if ($newSize -lt 2000000) {{  # < 2 MB almost certainly a bad download
-     Write-Host "ERROR: Downloaded executable too small ($newSize bytes)"
-     exit 1
- }}
-
- # Backup current exe (best effort)
- try {{
-     Copy-Item $currentExe $backupExe -Force
-     Write-Host "Backup created at $backupExe"
- }} catch {{
-     Write-Host "WARNING: Could not create backup – $($_.Exception.Message)"
- }}
-
- # Move new exe into place – retry while old file may still be locked
- $maxRetry = 30
- $moved = $false
- for ($i = 0; $i -lt $maxRetry -and -not $moved; $i++) {{
-     try {{
-         Move-Item $tempNewExe $finalNewExe -Force
-         $moved = $true
-     }} catch {{
-         Start-Sleep -Milliseconds 700
-     }}
- }}
- if (-not $moved) {{
-     Write-Host "ERROR: Could not move new executable after $maxRetry attempts"
-     exit 1
- }}
-
- # Remove the Mark‑of‑the‑Web (SmartScreen) so launch doesn’t get blocked
- try {{ Unblock-File -Path $finalNewExe }} catch {{ }}
-
- # Remove old version (ignore errors – the file might still be in use)
- try {{ Remove-Item $currentExe -Force }} catch {{ }}
-
- Write-Host "Launching updated application..."
- try {{
-     Start-Process -FilePath $finalNewExe
-     Write-Host "Updated application launched"
- }} catch {{
-     Write-Host "ERROR: Launch failed – $($_.Exception.Message)"
-     if (Test-Path $backupExe) {{
-         Write-Host "Restoring backup..."
-         Copy-Item $backupExe $currentExe -Force
-         Start-Process -FilePath $currentExe
-     }}
- }}
-
- # House‑keeping
- Start-Sleep -Seconds 2
- try {{ Remove-Item $backupExe -Force }} catch {{ }}
- try {{ Remove-Item $MyInvocation.MyCommand.Path -Force }} catch {{ }}
-
- Write-Host "Update script completed"
- '''
+    exit /b 0
+    """
             script_file = tempfile.NamedTemporaryFile(
                 mode='w',
-                suffix='.ps1',
+                suffix='.bat',
                 delete=False,
                 encoding='utf-8'
             )
             script_file.write(script_content)
             script_file.close()
-            return script_file.name, 'powershell'
+            return script_file.name, 'batch'
         else:
             script_content = f'''#!/bin/bash
 echo "Starting update process..."
@@ -613,7 +558,7 @@ echo "Update process completed"
         try:
             # Add headers to avoid potential blocking
             req = urllib.request.Request(url)
-            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.19')
+            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.18')
             
             urllib.request.urlretrieve(url, new_exe_temp_path, reporthook=_hook)
             progress.close()
@@ -701,6 +646,11 @@ echo "Update process completed"
                     '-WindowStyle', 'Hidden',
                     '-ExecutionPolicy', 'Bypass',
                     '-File', script_path
+                ], creationflags=subprocess.CREATE_NO_WINDOW)
+            elif script_type == 'batch':
+                # Use cmd to run the batch script
+                subprocess.Popen([
+                    'cmd', '/c', script_path
                 ], creationflags=subprocess.CREATE_NO_WINDOW)
             else:
                 # Use bash on Unix systems
