@@ -332,19 +332,23 @@ class Main(QMainWindow):
             }
     
     def _create_update_script(self, new_exe_path, current_app_info, final_exe_name):
-        """Create a batch script to move the new EXE into place and launch it."""
-        import tempfile
+        """Create a batch script to move the new EXE into place and launch it (DEBUG VERSION: writes to Desktop)."""
+        import os
         current_exe = current_app_info['exe_path']
         app_dir = current_app_info['app_dir']
         new_exe_name = final_exe_name
         final_new_exe_path = os.path.join(str(app_dir), new_exe_name)
         script_content = f"""@echo off
-REM AudioSpectroDemo Auto-Updater (Batch)
+REM AudioSpectroDemo Auto-Updater (Batch DEBUG)
 
 setlocal ENABLEDELAYEDEXPANSION
 set "SRC={new_exe_path}"
 set "DST={final_new_exe_path}"
 set "OLD={current_exe}"
+
+echo SRC=!SRC!
+echo DST=!DST!
+echo OLD=!OLD!
 
 REM Wait for the old EXE to exit and unlock (max 30 attempts, 30*0.7s)
 for /L %%i in (1,1,30) do (
@@ -352,20 +356,21 @@ for /L %%i in (1,1,30) do (
     ren "!OLD!" "!OLD!.tmp" >nul 2>&1 && goto moved
 )
 echo ERROR: Old EXE did not exit in 30s
+pause
 exit /b 1
 :moved
 move /Y "!SRC!" "!DST!" >nul
 del /F /Q "!OLD!.tmp" >nul 2>&1
 start "" "!DST!"
+pause
 del "%~f0"
 exit /b 0
 """
-        script_file = tempfile.NamedTemporaryFile(
-            mode='w', suffix='.bat', delete=False, encoding='utf-8'
-        )
-        script_file.write(script_content)
-        script_file.close()
-        return script_file.name, 'batch'
+        desktop = os.path.join(os.path.expanduser("~"), "Desktop")
+        batch_path = os.path.join(desktop, "audiospectro_updater.bat")
+        with open(batch_path, "w", encoding="utf-8") as script_file:
+            script_file.write(script_content)
+        return batch_path, 'batch'
 
     def download_update(self):
         """Download and install update - replaces old version with new versioned executable"""
@@ -489,7 +494,6 @@ exit /b 0
 
     def _launch_update_process(self, new_exe_temp_path, current_app_info):
         """Launch the update process using a script"""
-        # Determine the target filename of the new executable (without the temporary prefix)
         dest_exe_name = filename_from_url(
             self.current_update_info.get("download_url", "")
         )
@@ -499,30 +503,29 @@ exit /b 0
                 new_exe_temp_path, current_app_info, dest_exe_name
             )
             final_path = current_app_info['app_dir'] / dest_exe_name
-            
-            print(f"Created update script: {script_path}")
-            print(f"Temp new executable: {new_exe_temp_path}")
-            print(f"Final new executable: {final_path}")
-            print(f"Current executable: {current_app_info['exe_path']}")
-            print(f"New executable name: {dest_exe_name}")
-            
-            # Show final confirmation
-            QMessageBox.information(
-                self, 
-                "Update Starting", 
-                f"The update will now begin.\n\n"
-                f"• Current: {current_app_info['exe_path'].name}\n"
-                f"• New: {dest_exe_name}\n\n"
-                "The application will close and the new version will start automatically."
+
+            debug_msg = (
+                f"About to run updater.\n"
+                f"Script: {script_path}\n"
+                f"Temp new exe: {new_exe_temp_path}\n"
+                f"Current exe: {current_app_info['exe_path']}\n"
+                f"Target exe: {final_path}\n"
             )
-            
+            QMessageBox.information(
+                self,
+                "DEBUG",
+                debug_msg
+            )
+
             # Prepare for shutdown
             self._prepare_for_update()
-            
+
             if script_type == 'batch':
+                # Use /k for debugging (cmd window stays open)
+                import subprocess
                 subprocess.Popen([
-                    'cmd', '/c', script_path
-                ], creationflags=subprocess.CREATE_NO_WINDOW)
+                    'cmd', '/k', script_path
+                ])
                 os._exit(0)
             elif script_type == 'powershell':
                 subprocess.Popen([
@@ -535,7 +538,7 @@ exit /b 0
             else:
                 subprocess.Popen(['/bin/bash', script_path])
                 os._exit(0)
-            
+
         except Exception as e:
             error_msg = f"Failed to launch update process: {e}"
             print(error_msg)
