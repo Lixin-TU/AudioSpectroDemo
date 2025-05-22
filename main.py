@@ -145,7 +145,7 @@ def parse_appcast_xml(url):
 def check_for_updates_async():
     """Check for updates in a separate thread"""
     try:
-        current_version = "0.2.19"
+        current_version = "0.2.18"
         appcast_url = "https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml"
 
         update_info = parse_appcast_xml(appcast_url)
@@ -248,7 +248,7 @@ class Main(QMainWindow):
             _ws.win_sparkle_set_log_path.argtypes = [ctypes.c_wchar_p]
 
             _ws.win_sparkle_set_appcast_url("https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml")
-            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.19")
+            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.18")
             _ws.win_sparkle_set_verbosity_level(2)
             _ws.win_sparkle_set_log_path(WINSPARKLE_LOG_PATH)
             _ws.win_sparkle_init()
@@ -317,13 +317,13 @@ class Main(QMainWindow):
                 'exe_name': script_path.name
             }
 
-    def _create_update_script(self, new_exe_path, current_app_info):
+    def _create_update_script(self, new_exe_path, current_app_info, final_exe_name):
         """Create an update script that replaces old versioned executable with new one"""
         current_exe = current_app_info['exe_path']
         app_dir = current_app_info['app_dir']
         
-        # Extract the new executable name from the downloaded file
-        new_exe_name = os.path.basename(new_exe_path)
+        # Use the desired final executable name”
+        new_exe_name = final_exe_name
         final_new_exe_path = os.path.join(str(app_dir), new_exe_name)
         
         if platform.system() == "Windows":
@@ -574,7 +574,7 @@ echo "Update process completed"
         try:
             # Add headers to avoid potential blocking
             req = urllib.request.Request(url)
-            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.19')
+            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.18')
             
             urllib.request.urlretrieve(url, new_exe_temp_path, reporthook=_hook)
             progress.close()
@@ -624,17 +624,22 @@ echo "Update process completed"
 
     def _launch_update_process(self, new_exe_temp_path, current_app_info):
         """Launch the update process using a script"""
+        # Determine the target filename of the new executable (without the temporary prefix)
+        dest_exe_name = os.path.basename(
+            self.current_update_info.get("download_url", os.path.basename(new_exe_temp_path))
+        )
         try:
             # Create update script
-            script_path, script_type = self._create_update_script(new_exe_temp_path, current_app_info)
-            
-            new_exe_name = os.path.basename(new_exe_temp_path).replace('_', '', 1)  # Remove the temp prefix
-            final_path = current_app_info['app_dir'] / new_exe_name
+            script_path, script_type = self._create_update_script(
+                new_exe_temp_path, current_app_info, dest_exe_name
+            )
+            final_path = current_app_info['app_dir'] / dest_exe_name
             
             print(f"Created update script: {script_path}")
             print(f"Temp new executable: {new_exe_temp_path}")
             print(f"Final new executable: {final_path}")
             print(f"Current executable: {current_app_info['exe_path']}")
+            print(f"New executable name: {dest_exe_name}")
             
             # Show final confirmation
             QMessageBox.information(
@@ -642,7 +647,7 @@ echo "Update process completed"
                 "Update Starting", 
                 f"The update will now begin.\n\n"
                 f"• Current: {current_app_info['exe_path'].name}\n"
-                f"• New: {new_exe_name}\n\n"
+                f"• New: {dest_exe_name}\n\n"
                 "The application will close and the new version will start automatically."
             )
             
