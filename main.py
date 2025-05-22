@@ -145,7 +145,7 @@ def parse_appcast_xml(url):
 def check_for_updates_async():
     """Check for updates in a separate thread"""
     try:
-        current_version = "0.2.19"
+        current_version = "0.2.18"
         appcast_url = "https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml"
 
         update_info = parse_appcast_xml(appcast_url)
@@ -248,7 +248,7 @@ class Main(QMainWindow):
             _ws.win_sparkle_set_log_path.argtypes = [ctypes.c_wchar_p]
 
             _ws.win_sparkle_set_appcast_url("https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml")
-            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.19")
+            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.18")
             _ws.win_sparkle_set_verbosity_level(2)
             _ws.win_sparkle_set_log_path(WINSPARKLE_LOG_PATH)
             _ws.win_sparkle_init()
@@ -317,10 +317,14 @@ class Main(QMainWindow):
                 'exe_name': script_path.name
             }
 
-    def _create_update_script(self, installer_path, current_app_info):
-        """Create an update script that handles the replacement properly"""
+    def _create_update_script(self, new_exe_path, current_app_info):
+        """Create an update script that replaces old versioned executable with new one"""
         current_exe = current_app_info['exe_path']
         app_dir = current_app_info['app_dir']
+        
+        # Extract the new executable name from the downloaded file
+        new_exe_name = os.path.basename(new_exe_path)
+        final_new_exe_path = os.path.join(str(app_dir), new_exe_name)
         
         if platform.system() == "Windows":
             script_content = f'''
@@ -331,26 +335,78 @@ Write-Host "Starting update process..."
 Start-Sleep -Seconds 3
 
 $currentExe = "{current_exe}"
-$newExe    = "{installer_path}"
+$tempNewExe = "{new_exe_path}"
+$finalNewExe = "{final_new_exe_path}"
 $backupExe = "$currentExe.backup"
 
-Write-Host "Backing up current executable..."
-Copy-Item $currentExe $backupExe -Force
+Write-Host "Current executable: $currentExe"
+Write-Host "Downloaded executable: $tempNewExe"
+Write-Host "Final new executable: $finalNewExe"
 
-Write-Host "Replacing with new version..."
-Copy-Item $newExe $currentExe -Force
+# Verify new executable exists and is valid
+if (-not (Test-Path $tempNewExe)) {{
+    Write-Host "Error: Downloaded executable not found at $tempNewExe"
+    exit 1
+}}
+
+$newSize = (Get-Item $tempNewExe).Length
+if ($newSize -lt 1000000) {{  # Less than 1MB seems too small
+    Write-Host "Error: Downloaded executable seems too small ($newSize bytes)"
+    exit 1
+}}
+
+Write-Host "Backing up current executable..."
+try {{
+    Copy-Item $currentExe $backupExe -Force
+    Write-Host "Backup created successfully"
+}} catch {{
+    Write-Host "Error creating backup: $($_.Exception.Message)"
+    exit 1
+}}
+
+Write-Host "Moving new executable to application directory..."
+try {{
+    # Move the new executable to the app directory with its new name
+    Move-Item $tempNewExe $finalNewExe -Force
+    Write-Host "New executable moved successfully"
+}} catch {{
+    Write-Host "Error moving new executable: $($_.Exception.Message)"
+    exit 1
+}}
+
+Write-Host "Removing old executable..."
+try {{
+    Remove-Item $currentExe -Force
+    Write-Host "Old executable removed successfully"
+}} catch {{
+    Write-Host "Warning: Could not remove old executable: $($_.Exception.Message)"
+    # This is not critical, continue with launch
+}}
 
 Write-Host "Launching updated application..."
-Start-Process -FilePath $currentExe
+try {{
+    Start-Process -FilePath $finalNewExe
+    Write-Host "Updated application launched successfully"
+}} catch {{
+    Write-Host "Error launching updated application: $($_.Exception.Message)"
+    # Try to restore backup if launch fails
+    if (Test-Path $backupExe) {{
+        Write-Host "Restoring backup due to launch failure..."
+        Copy-Item $backupExe $currentExe -Force
+        Remove-Item $finalNewExe -Force -ErrorAction SilentlyContinue
+        Start-Process -FilePath $currentExe
+        Write-Host "Backup restored and launched"
+    }}
+}}
 
 # Clean up
 Write-Host "Cleaning up temporary files..."
+Start-Sleep -Seconds 2
 Remove-Item $backupExe -Force -ErrorAction SilentlyContinue
-Remove-Item $newExe  -Force -ErrorAction SilentlyContinue
 
 # Remove this script
-Start-Sleep -Seconds 1
 Remove-Item $MyInvocation.MyCommand.Path -Force -ErrorAction SilentlyContinue
+Write-Host "Update process completed"
 '''
             script_file = tempfile.NamedTemporaryFile(
                 mode='w', 
@@ -368,26 +424,74 @@ echo "Starting update process..."
 sleep 3
 
 CURRENT_EXE="{current_exe}"
-NEW_EXE="{installer_path}"
+TEMP_NEW_EXE="{new_exe_path}"
+FINAL_NEW_EXE="{final_new_exe_path}"
 BACKUP_EXE="$CURRENT_EXE.backup"
 
-echo "Backing up current executable..."
-cp "$CURRENT_EXE" "$BACKUP_EXE"
+echo "Current executable: $CURRENT_EXE"
+echo "Downloaded executable: $TEMP_NEW_EXE"
+echo "Final new executable: $FINAL_NEW_EXE"
 
-echo "Replacing with new version..."
-cp "$NEW_EXE" "$CURRENT_EXE"
-chmod +x "$CURRENT_EXE"
+# Verify new executable exists and is valid
+if [ ! -f "$TEMP_NEW_EXE" ]; then
+    echo "Error: Downloaded executable not found at $TEMP_NEW_EXE"
+    exit 1
+fi
+
+NEW_SIZE=$(stat -f%z "$TEMP_NEW_EXE" 2>/dev/null || stat -c%s "$TEMP_NEW_EXE" 2>/dev/null)
+if [ "$NEW_SIZE" -lt 1000000 ]; then  # Less than 1MB seems too small
+    echo "Error: Downloaded executable seems too small ($NEW_SIZE bytes)"
+    exit 1
+fi
+
+echo "Backing up current executable..."
+if ! cp "$CURRENT_EXE" "$BACKUP_EXE"; then
+    echo "Error creating backup"
+    exit 1
+fi
+echo "Backup created successfully"
+
+echo "Moving new executable to application directory..."
+if ! mv "$TEMP_NEW_EXE" "$FINAL_NEW_EXE"; then
+    echo "Error moving new executable"
+    exit 1
+fi
+
+chmod +x "$FINAL_NEW_EXE"
+echo "New executable moved successfully"
+
+echo "Removing old executable..."
+if ! rm -f "$CURRENT_EXE"; then
+    echo "Warning: Could not remove old executable"
+    # This is not critical, continue with launch
+fi
+echo "Old executable removed"
 
 echo "Launching updated application..."
-"$CURRENT_EXE" &
+if ! "$FINAL_NEW_EXE" &; then
+    echo "Error launching updated application"
+    # Try to restore backup if launch fails
+    if [ -f "$BACKUP_EXE" ]; then
+        echo "Restoring backup due to launch failure..."
+        mv "$BACKUP_EXE" "$CURRENT_EXE"
+        rm -f "$FINAL_NEW_EXE"
+        chmod +x "$CURRENT_EXE"
+        "$CURRENT_EXE" &
+        echo "Backup restored and launched"
+    fi
+else
+    echo "Updated application launched successfully"
+fi
 
-echo "Cleaning up..."
+# Clean up
+echo "Cleaning up temporary files..."
+sleep 2
 rm -f "$BACKUP_EXE"
-rm -f "$NEW_EXE"
 
 # Remove this script itself
 sleep 1
 rm -f "$0"
+echo "Update process completed"
 '''
             script_file = tempfile.NamedTemporaryFile(
                 mode='w', 
@@ -400,43 +504,57 @@ rm -f "$0"
             return script_file.name, 'bash'
 
     def download_update(self):
-        """Download and install update with improved logic"""
+        """Download and install update - replaces old version with new versioned executable"""
         info = getattr(self, 'current_update_info', {})
         url = info.get('download_url')
         if not url:
             return
 
-        # Show confirmation dialog
+        # Extract version info for display
+        new_version = info.get('version', 'Unknown').replace('Version ', '').strip()
+        file_size_mb = info.get('file_size', 0) / (1024*1024)
+        size_text = f" ({file_size_mb:.1f} MB)" if file_size_mb > 0 else ""
+        
+        # Get current app info to show current version
+        current_app_info = self._get_current_app_info()
+        current_name = current_app_info['exe_path'].name
+        new_exe_name = os.path.basename(url)
+        
         reply = QMessageBox.question(
             self, 
             "Update Confirmation", 
-            "This will download and install the update.\n\n"
-            "The current application will be replaced with the new version.\n"
-            "The application will restart automatically after the update.\n\n"
+            f"This will update from {current_name} to {new_exe_name}{size_text}.\n\n"
+            "The update process will:\n"
+            "1. Download the new version\n"
+            "2. Back up the current version\n"
+            "3. Replace the old executable with the new one\n"
+            "4. Launch the new version automatically\n"
+            "5. Remove the old version\n\n"
             "Do you want to continue?",
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.Yes
         )
         if reply != QMessageBox.Yes:
             return
-
-        # Get current application info
-        current_app_info = self._get_current_app_info()
         
-        # Create installer path in temp directory to avoid conflicts
-        installer_name = os.path.basename(url)
-        temp_installer = tempfile.NamedTemporaryFile(
-            suffix=f"_{installer_name}", 
+        # Create path for new executable in temp directory
+        # Keep the original filename from URL for the download
+        new_exe_name = os.path.basename(url)
+        if not new_exe_name:
+            new_exe_name = f"AudioSpectroDemo-v{new_version}.exe"
+        
+        temp_new_exe = tempfile.NamedTemporaryFile(
+            suffix=f"_{new_exe_name}", 
             delete=False
         )
-        temp_installer.close()
-        installer_path = temp_installer.name
+        temp_new_exe.close()
+        new_exe_temp_path = temp_new_exe.name
 
         progress = QProgressDialog("Downloading update...", "Cancel", 0, 100, self)
         progress.setWindowModality(Qt.WindowModal)
         progress.setAutoClose(False)
         progress.setValue(0)
-        progress.canceled.connect(lambda: self._cancel_download(installer_path))
+        progress.canceled.connect(lambda: self._cancel_download(new_exe_temp_path))
         QApplication.processEvents()
 
         self._download_cancelled = False
@@ -447,40 +565,86 @@ rm -f "$0"
             if total_size > 0:
                 pct = int(count * block_size * 100 / total_size)
                 progress.setValue(min(pct, 100))
+                # Update progress text with download info
+                downloaded_mb = (count * block_size) / (1024*1024)
+                total_mb = total_size / (1024*1024)
+                progress.setLabelText(f"Downloading {new_exe_name}... {downloaded_mb:.1f}/{total_mb:.1f} MB")
                 QApplication.processEvents()
 
         try:
-            urllib.request.urlretrieve(url, installer_path, reporthook=_hook)
+            # Add headers to avoid potential blocking
+            req = urllib.request.Request(url)
+            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.18')
+            
+            urllib.request.urlretrieve(url, new_exe_temp_path, reporthook=_hook)
             progress.close()
             
             if self._download_cancelled:
                 return
             
+            # Verify downloaded file
+            if not os.path.exists(new_exe_temp_path):
+                raise Exception("Downloaded file is missing")
+                
+            file_size = os.path.getsize(new_exe_temp_path)
+            if file_size == 0:
+                raise Exception("Downloaded file is empty")
+            elif file_size < 1000000:  # Less than 1MB seems too small for this app
+                raise Exception(f"Downloaded file seems too small ({file_size} bytes)")
+            
+            print(f"Downloaded new executable to: {new_exe_temp_path}")
+            print(f"File size: {file_size} bytes")
+            print(f"New executable name: {new_exe_name}")
+            print(f"Current executable: {current_app_info['exe_path']}")
+            
             # Create and launch update script
-            self._launch_update_process(installer_path, current_app_info)
+            self._launch_update_process(new_exe_temp_path, current_app_info)
             
         except Exception as e:
             progress.close()
             if not self._download_cancelled:
-                QMessageBox.critical(self, "Update Error", f"Failed to download update: {e}")
+                error_msg = str(e)
+                if "HTTP Error" in error_msg:
+                    error_msg += "\n\nThis might be a temporary network issue. Please try again later."
+                elif "SSL" in error_msg or "certificate" in error_msg.lower():
+                    error_msg += "\n\nThis might be a certificate issue. Please check your internet connection."
+                QMessageBox.critical(self, "Update Error", f"Failed to download update:\n{error_msg}")
             try:
-                os.remove(installer_path)
+                os.remove(new_exe_temp_path)
             except:
                 pass
 
-    def _cancel_download(self, installer_path):
+    def _cancel_download(self, file_path):
         """Handle download cancellation"""
         self._download_cancelled = True
         try:
-            os.remove(installer_path)
+            os.remove(file_path)
         except:
             pass
 
-    def _launch_update_process(self, installer_path, current_app_info):
+    def _launch_update_process(self, new_exe_temp_path, current_app_info):
         """Launch the update process using a script"""
         try:
             # Create update script
-            script_path, script_type = self._create_update_script(installer_path, current_app_info)
+            script_path, script_type = self._create_update_script(new_exe_temp_path, current_app_info)
+            
+            new_exe_name = os.path.basename(new_exe_temp_path).replace('_', '', 1)  # Remove the temp prefix
+            final_path = current_app_info['app_dir'] / new_exe_name
+            
+            print(f"Created update script: {script_path}")
+            print(f"Temp new executable: {new_exe_temp_path}")
+            print(f"Final new executable: {final_path}")
+            print(f"Current executable: {current_app_info['exe_path']}")
+            
+            # Show final confirmation
+            QMessageBox.information(
+                self, 
+                "Update Starting", 
+                f"The update will now begin.\n\n"
+                f"• Current: {current_app_info['exe_path'].name}\n"
+                f"• New: {new_exe_name}\n\n"
+                "The application will close and the new version will start automatically."
+            )
             
             # Prepare for shutdown
             self._prepare_for_update()
@@ -498,11 +662,13 @@ rm -f "$0"
                 # Use bash on Unix systems
                 subprocess.Popen(['/bin/bash', script_path])
             
-            # Close the application immediately
-            QTimer.singleShot(100, lambda: QApplication.quit())
+            # Close the application after a short delay
+            QTimer.singleShot(500, lambda: QApplication.quit())
             
         except Exception as e:
-            QMessageBox.critical(self, "Update Error", f"Failed to launch update process: {e}")
+            error_msg = f"Failed to launch update process: {e}"
+            print(error_msg)
+            QMessageBox.critical(self, "Update Error", error_msg)
 
     def _prepare_for_update(self):
         """Prepare the application for update by cleaning up resources"""
