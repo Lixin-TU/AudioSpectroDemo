@@ -470,34 +470,27 @@ exit /b 0
         # IMPORTANT: Reset the download cancelled flag before starting
         self._download_cancelled = False
         
+        # Create a progress dialog with a more controlled cancel behavior
         progress = QProgressDialog("Downloading update...", "Cancel", 0, 100, self)
         progress.setWindowModality(Qt.WindowModal)
         progress.setAutoClose(True)
         progress.setValue(0)
+        
         # Store progress dialog reference to access it later
         self._download_progress = progress
-        # Use a safer cancellation mechanism
-        progress.canceled.connect(self._handle_download_cancel)
+        self._download_completed = False  # New flag to track download completion
         
-        # Method to set the cancelled flag
-        def _handle_cancellation():
-            self._download_cancelled = True
-            log_print("Download cancellation requested")
-            try:
-                os.remove(new_exe_temp_path)
-                log_print(f"Removed temp file: {new_exe_temp_path}")
-            except Exception as e:
-                log_print(f"Error removing temp file: {e}")
-        
-        # Connect the cancellation handling to this new method
-        progress.canceled.connect(lambda: _handle_cancellation())
-        
-        # Method to safely close progress dialog
+        # Only connect once to avoid duplicate signals
+        progress.canceled.connect(self._on_download_cancelled)
+
         def _safely_close_progress():
             if hasattr(self, '_download_progress') and self._download_progress:
                 try:
+                    # Block signals before closing to prevent unwanted cancel signals
+                    self._download_progress.blockSignals(True)
                     self._download_progress.close()
                     self._download_progress = None
+                    logging.debug("Progress dialog closed safely")
                 except Exception as e:
                     log_print(f"Error closing progress: {e}")
         
