@@ -6,7 +6,7 @@
     <item>
       <title>Version 0.2.11</title>
       <enclosure
-        url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.2.10/AudioSpectroDemo-v0.2.10.exe"
+        url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.2.11/AudioSpectroDemo-v0.2.11.exe"
         sparkle:version="0.2.11"
         sparkle:shortVersionString="0.2.11"
         type="application/octet-stream"/>
@@ -21,16 +21,6 @@
         sparkle:shortVersionString="0.2.8"
         type="application/octet-stream"/>
     </item>
-
-    <item>
-      <title>Version 0.2.7</title>
-      <enclosure
-        url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.2.7/AudioSpectroDemo-v0.2.7.exe"
-        sparkle:version="0.2.7"
-        sparkle:shortVersionString="0.2.7"
-        type="application/octet-stream"/>
-    </item>
-
 
 
   </channel>
