@@ -178,7 +178,7 @@ def filename_from_url(url: str, default: str = "update.exe") -> str:
 def check_for_updates_async():  
     """Check for updates in a separate thread"""
     try:
-        current_version = "0.2.21"
+        current_version = "0.2.22"
         appcast_url = "https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml"
 
         update_info = parse_appcast_xml(appcast_url)
@@ -300,7 +300,7 @@ class Main(QMainWindow):
             _ws.win_sparkle_set_log_path.argtypes = [ctypes.c_wchar_p]
 
             _ws.win_sparkle_set_appcast_url("https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml")
-            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.21")
+            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.22")
             _ws.win_sparkle_set_verbosity_level(2)
             _ws.win_sparkle_set_log_path(WINSPARKLE_LOG_PATH)
             _ws.win_sparkle_init()
@@ -499,7 +499,7 @@ exit /b 0
         try:
             # Add headers to avoid potential blocking
             req = urllib.request.Request(url)
-            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.21')
+            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.22')
 
             # Actually perform the download
             urllib.request.urlretrieve(url, new_exe_temp_path, reporthook=_hook)
@@ -523,8 +523,8 @@ exit /b 0
             file_size = os.path.getsize(new_exe_temp_path)
             if file_size == 0:
                 raise Exception("Downloaded file is empty")
-            elif file_size < 1000000:  # Less than 1MB seems too small for this app
-                raise Exception(f"Downloaded file seems too small ({file_size} bytes)")
+            elif file_size < 1000000:  # Less than 1MB seems to small for this app
+                raise Exception(f"Downloaded file seems to small ({file_size} bytes)")
 
             # If running from source (not frozen), we cannot auto‑replace the script.
             if not current_app_info['is_frozen']:
@@ -771,7 +771,8 @@ exit /b 0
             fig = plt.figure(figsize=(EXPORT_W/300, EXPORT_H/300), dpi=300)
             ax = fig.add_subplot(111)
             fig.subplots_adjust(left=0.08, right=0.98, top=0.92, bottom=0.12)
-            ax.imshow(np.flipud(rgb), aspect='auto',extent=[0, duration_min, 0, MAX_FREQ], origin='lower')
+            # Flip the spectrogram vertically for correct orientation with low frequencies at bottom
+            ax.imshow(np.flipud(rgb), aspect='auto', extent=[0, duration_min, 0, MAX_FREQ], origin='upper')
             ax.set_xlabel("Time (min)",fontsize=3)
             ax.set_ylabel("Frequency (kHz)",fontsize=3)
             freqs=[0,2000,4000,6000,10000,12000,14000,16000]
@@ -782,7 +783,8 @@ exit /b 0
             for spine in ax.spines.values(): spine.set_linewidth(0.4); spine.set_color("0.6")
             ax.set_title(os.path.basename(wav_path),fontsize=5,pad=4)
             png = os.path.join(export_dir, os.path.splitext(os.path.basename(wav_path))[0] + ".png")
-            fig.savefig(png,dpi=300,bbox_inches="tight",pad_inches=0.01)
+            # The file will be automatically overwritten if it exists (default behavior)
+            fig.savefig(png, dpi=300, bbox_inches="tight", pad_inches=0.01)
             plt.close(fig)
 
     def show_spectrogram_viewer(self, spectrograms):
@@ -838,6 +840,8 @@ exit /b 0
             fp,img = spectrograms[idx]
             db=slider.value(); img_f=img.astype(np.float32)/255.0
             img_f=np.clip(img_f*(10**(db/20.0)),0,1); disp=(img_f*255).astype(np.uint8)
+            # Apply the same flip as in the matplotlib export to ensure consistency
+            disp = np.flipud(disp)
             dialog.setWindowTitle(os.path.basename(fp))
             freqs=[0,2000,4000,6000,10000,12000,14000,16000]
             ticks=[(f,_hz_to_k_label(f)) for f in freqs]
@@ -846,9 +850,17 @@ exit /b 0
             pw.getAxis("left").setTicks([ticks])
             item=ImageItem(disp)
             item.setLookupTable(LUT,update=True)
-            item.setOpts(axisOrder="row-major")
-            item.setTransform(QTransform().scale(scale_x,-MAX_FREQ/(img.shape[0]-1)))
-            item.setPos(0,MAX_FREQ); pw.addItem(item); pw.setLimits(yMin=0,yMax=MAX_FREQ)
+            # Enable smooth interpolation for better color transitions
+            item.setOpts(axisOrder="row-major", useOpenGL=True)
+            # Apply bilinear interpolation for smoother rendering
+            item.setCompositionMode(pg.QtGui.QPainter.CompositionMode_SourceOver)
+            # Since we flipped the data, use a negative scale to correct the orientation
+            item.setTransform(QTransform().scale(scale_x, -MAX_FREQ/(img.shape[0]-1)))
+            item.setPos(0, MAX_FREQ)  # Position at top since we're using negative scaling
+            pw.addItem(item); pw.setLimits(yMin=0, yMax=MAX_FREQ)
+            # Enable antialiasing for smoother rendering
+            pw.setRenderHint(pg.QtGui.QPainter.Antialiasing, True)
+            pw.setRenderHint(pg.QtGui.QPainter.SmoothPixmapTransform, True)
             prev_btn.setEnabled(idx>0); next_btn.setEnabled(idx<len(spectrograms)-1)
         slider.valueChanged.connect(lambda v: (gain_value.setText(f"{int(v)} dB"), update(index)))
         prev_btn.clicked.connect(lambda: update(index-1))

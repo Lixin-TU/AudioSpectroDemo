@@ -9,8 +9,8 @@ import numpy as np
 import librosa
 
 TARGET_SR = 32_552  # resample target
-MIN_FREQ = 1        # Hz – matches GUI “Min Frequency”
-MAX_FREQ = 16_276   # Hz – matches GUI “Max Frequency”
+MIN_FREQ = 1        # Hz – matches GUI "Min Frequency"
+MAX_FREQ = 16_276   # Hz – matches GUI "Max Frequency"
 TOP_DB = 80         # dynamic‑range trimming in dB
 GAIN_DB = 0        # extra gain applied after power‑to‑dB
 
@@ -66,7 +66,7 @@ def wav_to_mel_image(
     S_db = librosa.power_to_db(S, ref=np.max, top_db=TOP_DB)
 
     # Clip to the displayable dynamic range and scale to 0‑255.
-    # Values above 0 dB are clipped (white); ‑TOP_DB maps to black.
+    # Values above 0 dB are clipped (white); ‑TOP_DB maps to black.
     S_db = np.clip(S_db, -TOP_DB, 0)
     S_norm = (S_db + TOP_DB) / TOP_DB         # 0→black, 1→white
     return (S_norm * 255).astype(np.uint8)
