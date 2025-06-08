@@ -178,7 +178,7 @@ def filename_from_url(url: str, default: str = "update.exe") -> str:
 def check_for_updates_async():  
     """Check for updates in a separate thread"""
     try:
-        current_version = "0.2.23"
+        current_version = "0.2.24"
         appcast_url = "https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml"
 
         update_info = parse_appcast_xml(appcast_url)
@@ -306,7 +306,7 @@ class Main(QMainWindow):
             _ws.win_sparkle_set_log_path.argtypes = [ctypes.c_wchar_p]
 
             _ws.win_sparkle_set_appcast_url("https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml")
-            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.23")
+            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.24")
             _ws.win_sparkle_set_verbosity_level(2)
             _ws.win_sparkle_set_log_path(WINSPARKLE_LOG_PATH)
             _ws.win_sparkle_init()
@@ -505,7 +505,7 @@ exit /b 0
         try:
             # Add headers to avoid potential blocking
             req = urllib.request.Request(url)
-            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.23')
+            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.24')
 
             # Actually perform the download
             urllib.request.urlretrieve(url, new_exe_temp_path, reporthook=_hook)
@@ -899,8 +899,8 @@ exit /b 0
             waveform_pw.setLabel("left", "Amplitude")
             time_axis = np.linspace(0, duration_min, len(y))
             waveform_pw.plot(time_axis, y, pen='black')
-            waveform_pw.setLimits(xMin=0, xMax=duration_min)
-            waveform_pw.setRange(xRange=[0, duration_min], padding=0)
+            waveform_pw.setLimits(xMin=0, xMax=duration_min, yMin=-1, yMax=1)  # Fixed y-axis for waveform
+            waveform_pw.setRange(xRange=[0, duration_min], yRange=[-1, 1], padding=0)  # Fixed amplitude range
             waveform_pw.getAxis('bottom').setStyle(showValues=False)  # Hide x-axis labels on waveform
             
             # Setup spectrogram plot with synchronized x-axis
@@ -916,7 +916,7 @@ exit /b 0
             item.setTransform(QTransform().scale(scale_x, -MAX_FREQ/(img.shape[0]-1)))
             item.setPos(0, MAX_FREQ)  # Position at top since we're using negative scaling
             spectrogram_pw.addItem(item)
-            # Set identical limits and range for both plots to ensure synchronized x-axis
+            # Set identical limits and range for both plots with fixed y-axis for spectrogram
             spectrogram_pw.setLimits(xMin=0, xMax=duration_min, yMin=0, yMax=MAX_FREQ)
             spectrogram_pw.setRange(xRange=[0, duration_min], yRange=[0, MAX_FREQ], padding=0)
             # Enable antialiasing for smoother rendering
