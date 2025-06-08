@@ -5,12 +5,13 @@ Handles long recordings by down-sampling to TARGET_SR and converts the
 power-spectrogram to an 8-bit greyscale image for display.
 """
 
-import numpy as np
 import librosa
+import numpy as np
 
-TARGET_SR = 32_552  # resample target
-MIN_FREQ = 1        # Hz – matches GUI "Min Frequency"
-MAX_FREQ = 16_276   # Hz – matches GUI "Max Frequency"
+# Audio processing parameters
+TARGET_SR = 22_050  # resample target
+MIN_FREQ = 0        # Hz – matches GUI "Min Frequency"
+MAX_FREQ = 16_000   # Hz – matches GUI "Max Frequency"
 TOP_DB = 80         # dynamic‑range trimming in dB
 GAIN_DB = 0        # extra gain applied after power‑to‑dB
 
@@ -18,7 +19,7 @@ def wav_to_mel_image(
     path: str,
     window: int = 2048,
     hop: int = 512,
-    n_mels: int = 256,
+    n_mels: int = 128,
     padding_factor: int = 2,
 ) -> np.ndarray:
     """
@@ -32,7 +33,7 @@ def wav_to_mel_image(
         STFT window size (Hann).
     hop : int  (default 512)
         Hop length between frames.
-    n_mels : int  (default 256)
+    n_mels : int  (default 128)
         Number of mel bands.
     padding_factor : int
         Zero‑padding factor (e.g. 2 → FFT size = window * 2).

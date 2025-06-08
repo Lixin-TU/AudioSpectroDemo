@@ -178,7 +178,7 @@ def filename_from_url(url: str, default: str = "update.exe") -> str:
 def check_for_updates_async():  
     """Check for updates in a separate thread"""
     try:
-        current_version = "0.2.24"
+        current_version = "0.2.25"
         appcast_url = "https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml"
 
         update_info = parse_appcast_xml(appcast_url)
@@ -306,7 +306,7 @@ class Main(QMainWindow):
             _ws.win_sparkle_set_log_path.argtypes = [ctypes.c_wchar_p]
 
             _ws.win_sparkle_set_appcast_url("https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml")
-            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.24")
+            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.25")
             _ws.win_sparkle_set_verbosity_level(2)
             _ws.win_sparkle_set_log_path(WINSPARKLE_LOG_PATH)
             _ws.win_sparkle_init()
@@ -505,7 +505,7 @@ exit /b 0
         try:
             # Add headers to avoid potential blocking
             req = urllib.request.Request(url)
-            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.24')
+            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.25')
 
             # Actually perform the download
             urllib.request.urlretrieve(url, new_exe_temp_path, reporthook=_hook)
@@ -823,115 +823,227 @@ exit /b 0
 
     def show_spectrogram_viewer(self, spectrograms):
         """Show the spectrogram viewer dialog with waveform and spectrogram"""
+        print(f"show_spectrogram_viewer called with {len(spectrograms)} spectrograms")
+        
+        if not spectrograms:
+            QMessageBox.warning(self, "No Data", "No spectrograms to display")
+            return
+            
         dialog = QDialog(self)
         dialog.setWindowTitle("Spectrogram Viewer")
+        dialog.setModal(True)
         main_layout = QVBoxLayout(dialog)
         
-        # Create two plot widgets - waveform on top, spectrogram on bottom
+        # Create two plot widgets with explicit configuration
         waveform_pw = PlotWidget(background="w")
-        waveform_pw.setFixedHeight(120)  # Smaller height for waveform
+        waveform_pw.setFixedHeight(120)
+        waveform_pw.setLabel('left', 'Amplitude')
+        waveform_pw.setLabel('bottom', 'Time (min)')
+        
         spectrogram_pw = PlotWidget(background="w")
+        spectrogram_pw.setLabel('left', 'Frequency (Hz)')
+        spectrogram_pw.setLabel('bottom', 'Time (min)')
         
         main_layout.addWidget(waveform_pw)
         main_layout.addWidget(spectrogram_pw)
 
         btn_layout = QHBoxLayout()
-
-        # Previous navigation button
         prev_btn = QPushButton("Previous")
-
-        # Disabled, circular "Detect" button (under development)
         detect_btn = QPushButton("")
         detect_btn.setEnabled(False)
-        detect_btn.setFixedSize(50, 50)  # circle diameter (larger)
+        detect_btn.setFixedSize(50, 50)
         detect_btn.setToolTip("Detect Anomaly Events (under development)")
         detect_btn.setStyleSheet(
             "border-radius:25px;"
-            "background-color:#CCCCCC;"  # neutral grey
+            "background-color:#CCCCCC;"
             "border: 1px solid #999999;"
         )
-
-        # Next navigation button
         next_btn = QPushButton("Next")
-
-        # Add buttons to layout: Previous | Detect | Next
         btn_layout.addWidget(prev_btn)
         btn_layout.addWidget(detect_btn)
         btn_layout.addWidget(next_btn)
-
         main_layout.addLayout(btn_layout)
 
         gain_layout = QHBoxLayout()
         gain_label = QLabel("Color gain (dB):")
-        slider = QSlider(Qt.Horizontal); slider.setRange(0,40); slider.setValue(0)
+        slider = QSlider(Qt.Horizontal)
+        slider.setRange(0, 40)
+        slider.setValue(0)
         gain_value = QLabel("0 dB")
-        gain_layout.addWidget(gain_label); gain_layout.addWidget(slider,1); gain_layout.addWidget(gain_value)
+        gain_layout.addWidget(gain_label)
+        gain_layout.addWidget(slider, 1)
+        gain_layout.addWidget(gain_value)
         main_layout.addLayout(gain_layout)
 
-        small = self.font(); small.setPointSizeF(small.pointSizeF()*0.85)
-        gain_label.setFont(small); gain_value.setFont(small)
+        small = self.font()
+        small.setPointSizeF(small.pointSizeF() * 0.85)
+        gain_label.setFont(small)
+        gain_value.setFont(small)
 
         from PySide6.QtGui import QTransform
-        index=0
+        index = 0
+        
         def update(idx):
             nonlocal index
             index = idx
-            waveform_pw.clear()
-            spectrogram_pw.clear()
             
-            fp, img = spectrograms[idx]
-            
-            # Load audio for waveform
-            y, sr = librosa.load(fp, sr=TARGET_SR, mono=True)
-            
-            db=slider.value(); img_f=img.astype(np.float32)/255.0
-            img_f=np.clip(img_f*(10**(db/20.0)),0,1); disp=(img_f*255).astype(np.uint8)
-            # Apply the same flip as in the matplotlib export to ensure consistency
-            disp = np.flipud(disp)
-            dialog.setWindowTitle(os.path.basename(fp))
-            freqs=[0,2000,4000,6000,10000,12000,14000,16000]
-            ticks=[(f,_hz_to_k_label(f)) for f in freqs]
-            hop=512; scale_x=hop/TARGET_SR/60
-            # Calculate proper time duration for this specific file
-            duration_min = img.shape[1] * hop / TARGET_SR / 60.0
-            
-            # Setup waveform plot with same time scale as spectrogram
-            waveform_pw.setLabel("left", "Amplitude")
-            time_axis = np.linspace(0, duration_min, len(y))
-            waveform_pw.plot(time_axis, y, pen='black')
-            waveform_pw.setLimits(xMin=0, xMax=duration_min, yMin=-1, yMax=1)  # Fixed y-axis for waveform
-            waveform_pw.setRange(xRange=[0, duration_min], yRange=[-1, 1], padding=0)  # Fixed amplitude range
-            waveform_pw.getAxis('bottom').setStyle(showValues=False)  # Hide x-axis labels on waveform
-            
-            # Setup spectrogram plot with synchronized x-axis
-            spectrogram_pw.setLabel("bottom","Time",units="min"); spectrogram_pw.setLabel("left","Freq",units="Hz")
-            spectrogram_pw.getAxis("left").setTicks([ticks])
-            item=ImageItem(disp)
-            item.setLookupTable(LUT,update=True)
-            # Enable smooth interpolation for better color transitions
-            item.setOpts(axisOrder="row-major", useOpenGL=True)
-            # Apply bilinear interpolation for smoother rendering
-            item.setCompositionMode(pg.QtGui.QPainter.CompositionMode_SourceOver)
-            # Since we flipped the data, use a negative scale to correct the orientation
-            item.setTransform(QTransform().scale(scale_x, -MAX_FREQ/(img.shape[0]-1)))
-            item.setPos(0, MAX_FREQ)  # Position at top since we're using negative scaling
-            spectrogram_pw.addItem(item)
-            # Set identical limits and range for both plots with fixed y-axis for spectrogram
-            spectrogram_pw.setLimits(xMin=0, xMax=duration_min, yMin=0, yMax=MAX_FREQ)
-            spectrogram_pw.setRange(xRange=[0, duration_min], yRange=[0, MAX_FREQ], padding=0)
-            # Enable antialiasing for smoother rendering
-            spectrogram_pw.setRenderHint(pg.QtGui.QPainter.Antialiasing, True)
-            spectrogram_pw.setRenderHint(pg.QtGui.QPainter.SmoothPixmapTransform, True)
-            
-            # Link the x-axes of both plots for synchronized zooming/panning
-            waveform_pw.setXLink(spectrogram_pw)
-            
-            prev_btn.setEnabled(idx>0); next_btn.setEnabled(idx<len(spectrograms)-1)
+            try:
+                print(f"Starting update for index {idx}")
+                
+                # Clear existing plots
+                waveform_pw.clear()
+                spectrogram_pw.clear()
+                
+                if idx >= len(spectrograms):
+                    print(f"Index {idx} out of range for {len(spectrograms)} spectrograms")
+                    return
+                    
+                fp, img = spectrograms[idx]
+                print(f"Updating display for {fp}, image shape: {img.shape}")
+                
+                # Load audio for waveform
+                y, sr = librosa.load(fp, sr=TARGET_SR, mono=True)
+                print(f"Audio loaded: {len(y)} samples at {sr} Hz")
+                
+                # Apply gain to spectrogram
+                db = slider.value()
+                img_f = img.astype(np.float32)
+                if img_f.max() > 1.0:
+                    img_f = img_f / 255.0
+                img_f = np.clip(img_f * (10**(db/20.0)), 0, 1)
+                disp = (img_f * 255).astype(np.uint8)
+                print(f"Processed spectrogram shape: {disp.shape}, dtype: {disp.dtype}, range: {disp.min()}-{disp.max()}")
+                
+                dialog.setWindowTitle(os.path.basename(fp))
+                freqs = [0, 2000, 4000, 6000, 10000, 12000, 14000, 16000]
+                ticks = [(f, _hz_to_k_label(f)) for f in freqs]
+                hop = 512
+                duration_min = img.shape[1] * hop / TARGET_SR / 60.0
+                print(f"Duration: {duration_min:.2f} minutes")
+                
+                # Create waveform plot - downsample for better performance
+                print("Setting up waveform plot...")
+                # Downsample waveform for display (every 100th sample for long files)
+                downsample_factor = max(1, len(y) // 10000)  # Keep around 10k points max
+                y_display = y[::downsample_factor]
+                time_axis = np.linspace(0, duration_min, len(y_display))
+                
+                # Plot waveform
+                waveform_curve = waveform_pw.plot(
+                    time_axis, y_display,
+                    pen=pg.mkPen(color='black', width=1)
+                )
+                print(f"Waveform plot created with {len(time_axis)} points (downsampled from {len(y)})")
+                
+                # Set waveform plot properties
+                waveform_pw.setRange(xRange=[0, duration_min], yRange=[-1, 1], padding=0)
+                waveform_pw.enableAutoRange(axis='y')
+                waveform_pw.showGrid(x=True, y=True, alpha=0.3)
+                
+                # Create spectrogram plot with Windows-compatible approach
+                print("Setting up spectrogram plot...")
+                
+                # Flip the spectrogram for correct orientation (low freq at bottom)
+                flipped_disp = np.flipud(disp)
+                print(f"Creating ImageItem with shape: {flipped_disp.shape}")
+                
+                # Windows-specific fix: Use a different approach for ImageItem
+                if platform.system() == "Windows":
+                    print("Applying Windows-specific ImageItem configuration...")
+                    
+                    # Create ImageItem with explicit bounds
+                    item = ImageItem(flipped_disp, border='w')
+                    
+                    # Set the lookup table
+                    item.setLookupTable(LUT)
+                    
+                    # Use setPos and setScale instead of setRect for better Windows compatibility
+                    # Calculate the scale factors to map image pixels to real coordinates
+                    x_scale = duration_min / flipped_disp.shape[1]
+                    y_scale = MAX_FREQ / flipped_disp.shape[0]
+                    
+                    # Set position to origin and scale to map to real coordinates
+                    item.setPos(0, 0)
+                    item.scale(x_scale, y_scale)
+                    
+                    print(f"Windows: Position set to (0,0), scale set to ({x_scale:.6f}, {y_scale:.2f})")
+                    
+                else:
+                    # macOS/Linux approach
+                    print("Applying macOS/Linux ImageItem configuration...")
+                    item = ImageItem(flipped_disp)
+                    item.setLookupTable(LUT)
+                    
+                    # Use setRect for macOS/Linux
+                    rect = pg.QtCore.QRectF(0, 0, duration_min, MAX_FREQ)
+                    item.setRect(rect)
+                    print(f"macOS: ImageItem rect set to: {rect}")
+                
+                # Add item to plot
+                spectrogram_pw.addItem(item)
+                print("ImageItem added to spectrogram plot")
+                
+                # Set frequency axis ticks
+                spectrogram_pw.getAxis("left").setTicks([ticks])
+                
+                # Set plot range and limits
+                spectrogram_pw.setLimits(xMin=0, xMax=duration_min, yMin=0, yMax=MAX_FREQ)
+                spectrogram_pw.setRange(xRange=[0, duration_min], yRange=[0, MAX_FREQ], padding=0)
+                
+                # Windows-specific rendering optimizations
+                if platform.system() == "Windows":
+                    spectrogram_pw.setRenderHint(pg.QtGui.QPainter.Antialiasing, False)
+                    spectrogram_pw.setRenderHint(pg.QtGui.QPainter.SmoothPixmapTransform, False)
+                    # Force a specific aspect ratio mode
+                    spectrogram_pw.getViewBox().setAspectLocked(False)
+                else:
+                    spectrogram_pw.setRenderHint(pg.QtGui.QPainter.Antialiasing, True)
+                    spectrogram_pw.setRenderHint(pg.QtGui.QPainter.SmoothPixmapTransform, True)
+                
+                spectrogram_pw.showGrid(x=True, y=True, alpha=0.3)
+                print(f"Spectrogram plot range set: x=[0, {duration_min:.2f}], y=[0, {MAX_FREQ}]")
+                
+                # Link the x-axes
+                waveform_pw.setXLink(spectrogram_pw)
+                print("X-axes linked")
+                
+                # Update button states
+                prev_btn.setEnabled(idx > 0)
+                next_btn.setEnabled(idx < len(spectrograms) - 1)
+                
+                # Force updates and repaints
+                waveform_pw.update()
+                spectrogram_pw.update()
+                QApplication.processEvents()
+                
+                print(f"Display update completed for index {idx}")
+                
+            except Exception as e:
+                print(f"Error in update function: {e}")
+                import traceback
+                traceback.print_exc()
+                QMessageBox.critical(dialog, "Display Error", f"Error updating display: {e}")
+        
+        # Connect signals
         slider.valueChanged.connect(lambda v: (gain_value.setText(f"{int(v)} dB"), update(index)))
         prev_btn.clicked.connect(lambda: update(index-1))
         next_btn.clicked.connect(lambda: update(index+1))
-        update(0)
-        dialog.resize(VIEWER_W, VIEWER_H+200)  # Use original viewer dimensions
+        
+        # Initial update
+        print("Performing initial update...")
+        try:
+            update(0)
+        except Exception as e:
+            print(f"Error in initial update: {e}")
+            import traceback
+            traceback.print_exc()
+            QMessageBox.critical(self, "Display Error", f"Error initializing display: {e}")
+            return
+            
+        # Show the dialog
+        dialog.resize(VIEWER_W, VIEWER_H + 200)
+        print("Showing dialog...")
+        dialog.show()
         dialog.exec()
 
     def closeEvent(self,event):

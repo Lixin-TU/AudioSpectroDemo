@@ -4,11 +4,19 @@
   <channel>
     <title>AudioSpectroDemo Updates</title>
     <item>
+<<<<<<< HEAD
       <title>Version 0.2.24</title>
       <enclosure
         url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.2.24/AudioSpectroDemo-v0.2.24.exe"
         sparkle:version="0.2.24"
         sparkle:shortVersionString="0.2.24"
+=======
+      <title>Version 0.2.25</title>
+      <enclosure
+        url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.2.25/AudioSpectroDemo-v0.2.25.exe"
+        sparkle:version="0.2.25"
+        sparkle:shortVersionString="0.2.25"
+>>>>>>> 9f31319 (spectrogram fix-v0.2.25a)
         type="application/octet-stream"/>
     </item>
 
