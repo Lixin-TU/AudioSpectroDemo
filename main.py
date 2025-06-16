@@ -73,10 +73,15 @@ from PySide6.QtWidgets import (
     QLabel,
     QSlider,
     QMessageBox,
+    QWidget,
 )
-from PySide6.QtCore import Qt, QTimer, Signal, QObject, QThread
+from PySide6.QtCore import Qt, QTimer, Signal, QObject, QThread, QRectF
 import pyqtgraph as pg
 from pyqtgraph import PlotWidget, ImageItem
+
+# Add matplotlib imports for the new viewer
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
 
 # Global variables - will be set up in Main constructor
 WINSPARKLE_LOG_PATH = None
@@ -178,7 +183,7 @@ def filename_from_url(url: str, default: str = "update.exe") -> str:
 def check_for_updates_async():  
     """Check for updates in a separate thread"""
     try:
-        current_version = "0.2.24"
+        current_version = "0.2.25"
         appcast_url = "https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml"
 
         update_info = parse_appcast_xml(appcast_url)
@@ -306,7 +311,7 @@ class Main(QMainWindow):
             _ws.win_sparkle_set_log_path.argtypes = [ctypes.c_wchar_p]
 
             _ws.win_sparkle_set_appcast_url("https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml")
-            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.24")
+            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.25")
             _ws.win_sparkle_set_verbosity_level(2)
             _ws.win_sparkle_set_log_path(WINSPARKLE_LOG_PATH)
             _ws.win_sparkle_init()
@@ -505,7 +510,7 @@ exit /b 0
         try:
             # Add headers to avoid potential blocking
             req = urllib.request.Request(url)
-            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.24')
+            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.25')
 
             # Actually perform the download
             urllib.request.urlretrieve(url, new_exe_temp_path, reporthook=_hook)
@@ -625,7 +630,7 @@ exit /b 0
         try:
             if os.path.exists(file_path):
                 os.remove(file_path)
-        except Exception as e:
+        except Exception as e:  # Fix: add 'as' keyword
             pass
 
     def _handle_download_cancel(self):
@@ -814,7 +819,7 @@ exit /b 0
             
             # Adjust layout to minimize space between subplots
             fig.subplots_adjust(left=0.08, right=0.98, top=0.92, bottom=0.12, hspace=0.25)  # Reduced hspace
-            fig.suptitle(os.path.basename(wav_path), fontsize=3, y=0.95)
+            fig.suptitle(os.path.basename(wav_path), csize=3, y=0.95)
             
             png = os.path.join(export_dir, os.path.splitext(os.path.basename(wav_path))[0] + ".png")
             # The file will be automatically overwritten if it exists (default behavior)
@@ -822,131 +827,348 @@ exit /b 0
             plt.close(fig)
 
     def show_spectrogram_viewer(self, spectrograms):
-        """Show the spectrogram viewer dialog with waveform and spectrogram"""
+        """Show the waveform and spectrogram viewer dialog using matplotlib"""
         dialog = QDialog(self)
-        dialog.setWindowTitle("Spectrogram Viewer")
+        dialog.setWindowTitle("Waveform & Spectrogram Viewer")
         main_layout = QVBoxLayout(dialog)
         
-        # Create two plot widgets - waveform on top, spectrogram on bottom
-        waveform_pw = PlotWidget(background="w")
-        waveform_pw.setFixedHeight(120)  # Smaller height for waveform
-        spectrogram_pw = PlotWidget(background="w")
-        
-        main_layout.addWidget(waveform_pw)
-        main_layout.addWidget(spectrogram_pw)
+        # Create matplotlib figure and canvas
+        self.figure = Figure(figsize=(12, 8), dpi=100)
+        self.canvas = FigureCanvas(self.figure)
+        main_layout.addWidget(self.canvas)
 
         btn_layout = QHBoxLayout()
 
         # Previous navigation button
         prev_btn = QPushButton("Previous")
+        prev_btn.setEnabled(False)
 
-        # Disabled, circular "Detect" button (under development)
-        detect_btn = QPushButton("")
-        detect_btn.setEnabled(False)
-        detect_btn.setFixedSize(50, 50)  # circle diameter (larger)
-        detect_btn.setToolTip("Detect Anomaly Events (under development)")
-        detect_btn.setStyleSheet(
-            "border-radius:25px;"
-            "background-color:#CCCCCC;"  # neutral grey
-            "border: 1px solid #999999;"
+        # Analysis button with floating menu
+        analysis_btn = QPushButton("Analysis")
+        analysis_btn.setFixedSize(60, 60)  # Make it square for circular shape
+        analysis_btn.setStyleSheet(
+            "QPushButton {"
+            "    background-color: #FF7777;"  # Lighter red
+            "    color: white;"
+            "    border: 2px solid white;"    # White border
+            "    border-radius: 30px;"        # Circular shape (half of 60px)
+            "    font-weight: bold;"
+            "    font-size: 9px;"
+            "}"
+            "QPushButton:hover {"
+            "    background-color: #FF9999;"  # Even lighter on hover
+            "}"
+            "QPushButton:pressed {"
+            "    background-color: #FF5555;"  # Slightly darker when pressed
+            "}"
         )
 
         # Next navigation button
         next_btn = QPushButton("Next")
+        next_btn.setEnabled(len(spectrograms) > 1)
 
-        # Add buttons to layout: Previous | Detect | Next
         btn_layout.addWidget(prev_btn)
-        btn_layout.addWidget(detect_btn)
+        btn_layout.addWidget(analysis_btn)
         btn_layout.addWidget(next_btn)
 
         main_layout.addLayout(btn_layout)
 
+        # Create fan-shaped analysis options that stay in the viewer
+        analysis_options_layout = QHBoxLayout()
+        
+        # Create sub-option buttons
+        remove_pulse_btn = QPushButton("Remove Pulse")
+        remove_pulse_btn.setFixedSize(100, 30)
+        remove_pulse_btn.setStyleSheet(
+            "QPushButton {"
+            "    background-color: #4CAF50;"
+            "    color: white;"
+            "    border: 1px solid white;"
+            "    border-radius: 15px;"
+            "    font-size: 8px;"
+            "    font-weight: bold;"
+            "}"
+            "QPushButton:hover {"
+            "    background-color: #66BB6A;"
+            "}"
+            "QPushButton:pressed {"
+            "    background-color: #388E3C;"
+            "}"
+        )
+        
+        anomaly_detection_btn = QPushButton("Anomaly Detection")
+        anomaly_detection_btn.setFixedSize(120, 30)
+        anomaly_detection_btn.setEnabled(False)  # Disabled temporarily
+        anomaly_detection_btn.setStyleSheet(
+            "QPushButton {"
+            "    background-color: #CCCCCC;"
+            "    color: #666666;"
+            "    border: 1px solid #999999;"
+            "    border-radius: 15px;"
+            "    font-size: 8px;"
+            "}"
+        )
+        
+        ai_anomaly_btn = QPushButton("AI Anomaly Detection")
+        ai_anomaly_btn.setFixedSize(140, 30)
+        ai_anomaly_btn.setEnabled(False)  # Disabled temporarily
+        ai_anomaly_btn.setStyleSheet(
+            "QPushButton {"
+            "    background-color: #CCCCCC;"
+            "    color: #666666;"
+            "    border: 1px solid #999999;"
+            "    border-radius: 15px;"
+            "    font-size: 8px;"
+            "}"
+        )
+        
+        # Initially hide the analysis options
+        remove_pulse_btn.setVisible(False)
+        anomaly_detection_btn.setVisible(False)
+        ai_anomaly_btn.setVisible(False)
+        
+        # Add buttons to layout with spacing for fan effect
+        analysis_options_layout.addStretch(1)
+        analysis_options_layout.addWidget(remove_pulse_btn)
+        analysis_options_layout.addWidget(anomaly_detection_btn)
+        analysis_options_layout.addWidget(ai_anomaly_btn)
+        analysis_options_layout.addStretch(1)
+        
+        main_layout.addLayout(analysis_options_layout)
+        
+        # Track visibility state
+        options_visible = False
+
+        # Toggle analysis options visibility with fan animation effect
+        def toggle_analysis_options():
+            nonlocal options_visible
+            options_visible = not options_visible
+            
+            if options_visible:
+                # Show buttons with a fan-like reveal
+                remove_pulse_btn.setVisible(True)
+                anomaly_detection_btn.setVisible(True)
+                ai_anomaly_btn.setVisible(True)
+                analysis_btn.setText("Close")
+            else:
+                # Hide buttons
+                remove_pulse_btn.setVisible(False)
+                anomaly_detection_btn.setVisible(False)
+                ai_anomaly_btn.setVisible(False)
+                analysis_btn.setText("Analysis")
+
+        # Connect analysis button to toggle options
+        analysis_btn.clicked.connect(toggle_analysis_options)
+
+        # Analysis function implementations
+        def run_remove_pulse(spectrogram_data):
+            try:
+                from dsp.remove_pulse import process_remove_pulse
+                fp, img = spectrogram_data
+                print(f"Running Remove Pulse on: {os.path.basename(fp)}")
+                result = process_remove_pulse(fp)
+                print(f"Remove Pulse completed: {result}")
+                # Show result in a message box
+                QMessageBox.information(dialog, "Remove Pulse", f"Processing completed!\n\nResults:\n{result}")
+            except ImportError:
+                print("Remove Pulse module not found")
+                QMessageBox.warning(dialog, "Module Not Found", "Remove Pulse module not found in dsp folder.")
+            except Exception as e:
+                print(f"Error in Remove Pulse: {e}")
+                QMessageBox.critical(dialog, "Error", f"Error in Remove Pulse:\n{str(e)}")
+
+        def run_anomaly_detection(spectrogram_data):
+            # Disabled for now
+            QMessageBox.information(dialog, "Feature Disabled", "Anomaly Detection is temporarily disabled.")
+
+        def run_ai_anomaly_detection(spectrogram_data):
+            # Disabled for now
+            QMessageBox.information(dialog, "Feature Disabled", "AI Anomaly Detection is temporarily disabled.")
+
+        # Connect only the enabled button
+        remove_pulse_btn.clicked.connect(lambda: run_remove_pulse(spectrograms[index]))
+
+        # Add gain control for spectrogram
         gain_layout = QHBoxLayout()
-        gain_label = QLabel("Color gain (dB):")
-        slider = QSlider(Qt.Horizontal); slider.setRange(0,40); slider.setValue(0)
+        gain_label = QLabel("Spectrogram gain (dB):")
+        gain_slider = QSlider(Qt.Horizontal)
+        gain_slider.setRange(0, 40)
+        gain_slider.setValue(0)
         gain_value = QLabel("0 dB")
-        gain_layout.addWidget(gain_label); gain_layout.addWidget(slider,1); gain_layout.addWidget(gain_value)
+        gain_layout.addWidget(gain_label)
+        gain_layout.addWidget(gain_slider, 1)
+        gain_layout.addWidget(gain_value)
         main_layout.addLayout(gain_layout)
 
-        small = self.font(); small.setPointSizeF(small.pointSizeF()*0.85)
-        gain_label.setFont(small); gain_value.setFont(small)
-
-        from PySide6.QtGui import QTransform
-        index=0
+        index = 0
+        
         def update(idx):
             nonlocal index
             index = idx
-            waveform_pw.clear()
-            spectrogram_pw.clear()
             
-            fp, img = spectrograms[idx]
-            
-            # Load audio for waveform
-            y, sr = librosa.load(fp, sr=TARGET_SR, mono=True)
-            
-            db=slider.value(); img_f=img.astype(np.float32)/255.0
-            img_f=np.clip(img_f*(10**(db/20.0)),0,1); disp=(img_f*255).astype(np.uint8)
-            # Apply the same flip as in the matplotlib export to ensure consistency
-            disp = np.flipud(disp)
-            dialog.setWindowTitle(os.path.basename(fp))
-            freqs=[0,2000,4000,6000,10000,12000,14000,16000]
-            ticks=[(f,_hz_to_k_label(f)) for f in freqs]
-            hop=512; scale_x=hop/TARGET_SR/60
-            # Calculate proper time duration for this specific file
-            duration_min = img.shape[1] * hop / TARGET_SR / 60.0
-            
-            # Setup waveform plot with same time scale as spectrogram
-            waveform_pw.setLabel("left", "Amplitude")
-            time_axis = np.linspace(0, duration_min, len(y))
-            waveform_pw.plot(time_axis, y, pen='black')
-            waveform_pw.setLimits(xMin=0, xMax=duration_min, yMin=-1, yMax=1)  # Fixed y-axis for waveform
-            waveform_pw.setRange(xRange=[0, duration_min], yRange=[-1, 1], padding=0)  # Fixed amplitude range
-            waveform_pw.getAxis('bottom').setStyle(showValues=False)  # Hide x-axis labels on waveform
-            
-            # Setup spectrogram plot with synchronized x-axis
-            spectrogram_pw.setLabel("bottom","Time",units="min"); spectrogram_pw.setLabel("left","Freq",units="Hz")
-            spectrogram_pw.getAxis("left").setTicks([ticks])
-            item=ImageItem(disp)
-            item.setLookupTable(LUT,update=True)
-            # Enable smooth interpolation for better color transitions
-            item.setOpts(axisOrder="row-major", useOpenGL=True)
-            # Apply bilinear interpolation for smoother rendering
-            item.setCompositionMode(pg.QtGui.QPainter.CompositionMode_SourceOver)
-            # Since we flipped the data, use a negative scale to correct the orientation
-            item.setTransform(QTransform().scale(scale_x, -MAX_FREQ/(img.shape[0]-1)))
-            item.setPos(0, MAX_FREQ)  # Position at top since we're using negative scaling
-            spectrogram_pw.addItem(item)
-            # Set identical limits and range for both plots with fixed y-axis for spectrogram
-            spectrogram_pw.setLimits(xMin=0, xMax=duration_min, yMin=0, yMax=MAX_FREQ)
-            spectrogram_pw.setRange(xRange=[0, duration_min], yRange=[0, MAX_FREQ], padding=0)
-            # Enable antialiasing for smoother rendering
-            spectrogram_pw.setRenderHint(pg.QtGui.QPainter.Antialiasing, True)
-            spectrogram_pw.setRenderHint(pg.QtGui.QPainter.SmoothPixmapTransform, True)
-            
-            # Link the x-axes of both plots for synchronized zooming/panning
-            waveform_pw.setXLink(spectrogram_pw)
-            
-            prev_btn.setEnabled(idx>0); next_btn.setEnabled(idx<len(spectrograms)-1)
-        slider.valueChanged.connect(lambda v: (gain_value.setText(f"{int(v)} dB"), update(index)))
+            try:
+                # Clear the figure
+                self.figure.clear()
+                
+                fp, _ = spectrograms[idx] # Ignore pre-computed spectrogram, generate fresh
+                dialog.setWindowTitle(os.path.basename(fp))
+                
+                # Load audio for waveform
+                y, sr = librosa.load(fp, sr=TARGET_SR, mono=True)
+                
+                # Calculate timing
+                duration_min = len(y) / sr / 60.0
+                
+                print(f"File: {os.path.basename(fp)}")
+                print(f"Audio: {len(y)} samples, {y.min():.3f} to {y.max():.3f}")
+                print(f"Duration: {duration_min:.2f} min")
+                
+                # Create subplots - waveform on top, spectrogram on bottom
+                ax1 = self.figure.add_subplot(2, 1, 1)
+                ax2 = self.figure.add_subplot(2, 1, 2, sharex=ax1)  # Share x-axis
+                
+                # --- WAVEFORM PLOT ---
+                time_axis = np.linspace(0, duration_min, len(y))
+                ax1.plot(time_axis, y, color='black', linewidth=0.5)
+                ax1.set_ylabel('Amplitude')
+                ax1.grid(True, alpha=0.3)
+                ax1.set_xlim(0, duration_min)
+                
+                # Set proper amplitude range with padding
+                y_min, y_max = y.min(), y.max()
+                y_range = y_max - y_min
+                if y_range < 1e-6:
+                    padding = 0.1
+                else:
+                    padding = y_range * 0.1
+                ax1.set_ylim(y_min - padding, y_max + padding)
+                ax1.set_title(f'Waveform & Spectrogram: {os.path.basename(fp)}')
+                
+                # --- SPECTROGRAM PLOT ---
+                # Generate mel spectrogram using librosa
+                n_mels = 256
+                hop_length = 512
+                n_fft = 2048
+                
+                # Compute mel spectrogram
+                mel_spec = librosa.feature.melspectrogram(
+                    y=y, 
+                    sr=sr, 
+                    n_mels=n_mels,
+                    n_fft=n_fft,
+                    hop_length=hop_length,
+                    fmin=MIN_FREQ,
+                    fmax=MAX_FREQ
+                )
+                
+                # Convert to dB scale
+                mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
+                
+                # Apply gain from slider
+                db_gain = gain_slider.value()
+                if db_gain > 0:
+                    mel_spec_db = mel_spec_db + db_gain
+                
+                # Create time axis for spectrogram (in minutes)
+                spec_time_frames = mel_spec_db.shape[1]
+                spec_duration_min = spec_time_frames * hop_length / sr / 60.0
+                
+                # Display spectrogram
+                im = ax2.imshow(
+                    mel_spec_db,
+                    aspect='auto',
+                    origin='lower',  # Low frequencies at bottom
+                    extent=[0, spec_duration_min, 0, MAX_FREQ],
+                    cmap='plasma'
+                )
+                
+                # Set consistent font size for all text elements
+                font_size = 8
+                
+                # Configure waveform plot
+                ax1.set_ylabel('Amplitude', fontsize=font_size)
+                ax1.set_title(f'Waveform & Spectrogram: {os.path.basename(fp)}', fontsize=font_size)
+                ax1.tick_params(axis='both', which='major', labelsize=font_size, length=6)
+                ax1.set_xticklabels([])  # Remove labels from top plot
+                
+                # Configure spectrogram plot
+                ax2.set_xlabel('Time (min)', fontsize=font_size)
+                ax2.set_ylabel('Frequency (kHz)', fontsize=font_size)
+                ax2.set_ylim(0, MAX_FREQ)
+                ax2.set_xlim(0, spec_duration_min)
+                
+                # Set frequency ticks to match export format
+                freqs = [0, 2000, 4000, 6000, 10000, 12000, 14000, 16000]
+                ax2.set_yticks(freqs)
+                ax2.set_yticklabels([_hz_to_k_label(f) for f in freqs], fontsize=font_size)
+                
+                # Set time ticks with consistent intervals
+                if spec_duration_min <= 5:
+                    time_interval = 1.0
+                elif spec_duration_min <= 15:
+                    time_interval = 2.0
+                elif spec_duration_min <= 30:
+                    time_interval = 5.0
+                else:
+                    time_interval = 10.0
+                
+                time_ticks = np.arange(0, spec_duration_min + time_interval/2, time_interval)
+                ax2.set_xticks(time_ticks)
+                ax2.set_xticklabels([f"{int(t)}" for t in time_ticks], fontsize=font_size)
+                ax2.tick_params(axis='both', which='major', labelsize=font_size, length=6)
+                
+                # Apply same time ticks to waveform
+                ax1.set_xticks(time_ticks)
+
+                # Adjust layout and refresh
+                self.figure.tight_layout()
+                self.canvas.draw()
+        
+                # Force canvas update
+                self.canvas.flush_events()
+                
+                # Enable/disable navigation buttons
+                prev_btn.setEnabled(idx > 0)
+                next_btn.setEnabled(idx < len(spectrograms) - 1)
+                
+                print(f"Matplotlib waveform and spectrogram created successfully")
+                print(f"Spectrogram shape: {mel_spec_db.shape}")
+                print(f"Time alignment: waveform={duration_min:.2f}min, spec={spec_duration_min:.2f}min")
+                
+            except Exception as e:
+                print(f"Error updating viewer: {e}")
+                import traceback
+                traceback.print_exc()
+
+        # Connect UI elements
         prev_btn.clicked.connect(lambda: update(index-1))
         next_btn.clicked.connect(lambda: update(index+1))
+        gain_slider.valueChanged.connect(lambda v: (gain_value.setText(f"{v} dB"), update(index)))
+        
+        # Set initial view
         update(0)
-        dialog.resize(VIEWER_W, VIEWER_H+200)  # Use original viewer dimensions
+        
+        # Set dialog size and show
+        dialog.resize(1000, 600)
         dialog.exec()
 
-    def closeEvent(self,event):
+    def closeEvent(self, event):
         global _ws
         # Cancel any running audio processing
         if self.audio_processor and self.audio_processor.isRunning():
             self.audio_processor.terminate()
             self.audio_processor.wait()
             
-        if platform.system()=="Windows" and _ws:
-            try: _ws.win_sparkle_cleanup()
-            except: pass
+        if platform.system() == "Windows" and _ws:
+            try: 
+                _ws.win_sparkle_cleanup()
+            except: 
+                pass
         for p in self._session_temp_files:
-            try: os.remove(p)
-            except: pass
+            try: 
+                os.remove(p)
+            except: 
+                pass
         # Delete update log file
         try:
             if os.path.exists(log_path):
