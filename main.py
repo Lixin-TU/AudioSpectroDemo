@@ -7,6 +7,7 @@ import logging  # Add this import
 
 import ctypes
 import shutil
+import re
 
 # Set up logging to file
 log_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "update_log.txt")
@@ -51,14 +52,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import librosa
 import threading
-import xml.etree.ElementTree as ET
-import urllib.request
-from urllib.parse import urlsplit, unquote
-import subprocess
-import tempfile
-from datetime import datetime
-from concurrent.futures import ThreadPoolExecutor
-import re
+from dsp.update import UpdateChecker, update_checker, parse_appcast_xml, filename_from_url, check_for_updates_async
 
 from PySide6.QtWidgets import (
     QApplication,
@@ -74,8 +68,12 @@ from PySide6.QtWidgets import (
     QSlider,
     QMessageBox,
     QWidget,
+    QProgressBar,
+    QFrame,
 )
-from PySide6.QtCore import Qt, QTimer, Signal, QObject, QThread, QRectF
+from PySide6.QtCore import Qt, QTimer, Signal, QObject, QThread, QRectF, QPropertyAnimation, QEasingCurve
+from PySide6.QtGui import QPalette
+
 import pyqtgraph as pg
 from pyqtgraph import PlotWidget, ImageItem
 
@@ -95,15 +93,6 @@ if platform.system() == "Windows":
     ctypes.windll.kernel32.SetErrorMode(
         SEM_FAILCRITICALERRORS | SEM_NOGPFAULTERRORBOX | SEM_NOOPENFILEERRORBOX
     )
-
-# Update checker signal class
-class UpdateChecker(QObject):
-    update_available = Signal(dict)
-    update_not_available = Signal(str)
-    update_error = Signal(str)
-
-# Global update checker instance
-update_checker = UpdateChecker()
 
 # Audio processing worker thread
 class AudioProcessor(QThread):
@@ -127,79 +116,6 @@ class AudioProcessor(QThread):
         except Exception as e:
             self.processing_error.emit(str(e))
 
-def parse_appcast_xml(url):
-    """Parse the appcast XML to get update information"""
-    try:
-        # Add timeout to prevent hanging
-        with urllib.request.urlopen(url, timeout=15) as response:
-            xml_data = response.read()
-
-        root = ET.fromstring(xml_data)
-        items = root.findall('.//item')
-        if not items:
-            return None
-        latest_item = items[0]
-
-        version_el = latest_item.find('title')
-        version_text = version_el.text if version_el is not None else "Unknown"
-
-        description_el = latest_item.find('description')
-        description_text = description_el.text if description_el is not None else ""
-
-        pub_date_el = latest_item.find('pubDate')
-        pub_date_text = pub_date_el.text if pub_date_el is not None else ""
-
-        enclosure = latest_item.find('enclosure')
-        download_url = enclosure.get('url') if enclosure is not None else ""
-        length = enclosure.get('length') or "0"
-        file_size = int(length) if length.isdigit() else 0
-
-        return {
-            'version': version_text,
-            'description': description_text,
-            'pub_date': pub_date_text,
-            'download_url': download_url,
-            'file_size': file_size
-        }
-    except Exception as e:
-        print(f"Error parsing appcast: {e}")
-        logging.error(f"Error parsing appcast: {e}", exc_info=True)
-        return None
-
-# ---------------------------------------------------------------------------
-# Helper: safely extract a usable filename from a download URL (strips
-# query‑string parameters like “?raw=true” that break Windows paths)
-def filename_from_url(url: str, default: str = "update.exe") -> str:
-
-    try:
-        path = urlsplit(url).path         
-        name = os.path.basename(unquote(path))
-        return name or default
-    except Exception:
-        return default
-# ---------------------------------------------------------------------------
-
-
-def check_for_updates_async():  
-    """Check for updates in a separate thread"""
-    try:
-        current_version = "0.2.25"
-        appcast_url = "https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml"
-
-        update_info = parse_appcast_xml(appcast_url)
-        if not update_info:
-            update_checker.update_error.emit("Failed to fetch update information")
-            return
-
-        latest_version = update_info['version'].replace('Version ', '').strip()
-        if latest_version != current_version:
-            update_checker.update_available.emit(update_info)
-        else:
-            update_checker.update_not_available.emit(current_version)
-    except Exception as e:
-        update_checker.update_error.emit(f"Update check failed: {e}")
-
-
 from dsp.mel import (
     wav_to_mel_image,
     TARGET_SR,
@@ -222,6 +138,255 @@ EXPORT_H = int(6 * 300 / 2.54)   # 6cm = ~709 pixels at 300 DPI
 VIEWER_W = 800
 VIEWER_H = 400
 
+class LoadingOverlay(QWidget):
+    """Loading overlay widget that appears over the viewer during processing"""
+    
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setObjectName("LoadingOverlay")
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+        
+        # Set up semi-transparent background
+        self.setStyleSheet("""
+            QWidget#LoadingOverlay {
+                background-color: rgba(255, 255, 255, 220);
+                border-radius: 10px;
+            }
+        """)
+        
+        # Create layout
+        layout = QVBoxLayout(self)
+        layout.setAlignment(Qt.AlignCenter)
+        
+        # Loading message
+        self.message_label = QLabel("Loading audio...")
+        self.message_label.setAlignment(Qt.AlignCenter)
+        self.message_label.setStyleSheet("""
+            QLabel {
+                font-size: 18px;
+                font-weight: bold;
+                color: #333;
+                margin-bottom: 20px;
+                padding: 10px;
+                background-color: rgba(255, 255, 255, 100);
+                border-radius: 5px;
+            }
+        """)
+        
+        # Progress bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setFixedWidth(350)
+        self.progress_bar.setFixedHeight(25)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: 2px solid #4CAF50;
+                border-radius: 12px;
+                text-align: center;
+                font-size: 14px;
+                font-weight: bold;
+                background-color: rgba(255, 255, 255, 200);
+            }
+            QProgressBar::chunk {
+                background: qlineargradient(x1:0, y1:0, x2:1, y2=0,
+                    stop:0 #4CAF50, stop:0.5 #66BB6A, stop:1 #45a049);
+                border-radius: 10px;
+                margin: 1px;
+            }
+        """)
+        
+        # Percentage label
+        self.percentage_label = QLabel("0%")
+        self.percentage_label.setAlignment(Qt.AlignCenter)
+        self.percentage_label.setStyleSheet("""
+            QLabel {
+                font-size: 16px;
+                font-weight: bold;
+                color: #333;
+                margin-top: 15px;
+                padding: 5px;
+                background-color: rgba(255, 255, 255, 100);
+                border-radius: 5px;
+            }
+        """)
+        
+        layout.addWidget(self.message_label)
+        layout.addWidget(self.progress_bar)
+        layout.addWidget(self.percentage_label)
+        
+        # Initially hidden
+        self.hide()
+    
+    def show_loading(self, message="Loading audio..."):
+        """Show the loading overlay with a message"""
+        self.message_label.setText(message)
+        self.progress_bar.setValue(0)
+        self.percentage_label.setText("0%")
+        self.show()
+        self.raise_()
+        # Force immediate repaint
+        QApplication.processEvents()
+    
+    def update_progress(self, value, message=None):
+        """Update the progress bar and optionally the message"""
+        self.progress_bar.setValue(value)
+        self.percentage_label.setText(f"{value}%")
+        if message:
+            self.message_label.setText(message)
+        # Force immediate update
+        QApplication.processEvents()
+    
+    def hide_loading(self):
+        """Hide the loading overlay"""
+        self.hide()
+        QApplication.processEvents()
+    
+    def resizeEvent(self, event):
+        """Resize to cover the entire parent widget"""
+        if self.parent():
+            self.resize(self.parent().size())
+        super().resizeEvent(event)
+
+class AudioCache:
+    """Cache for processed audio data to speed up navigation"""
+    
+    def __init__(self, max_size=10):
+        self.cache = {}
+        self.max_size = max_size
+        self.access_order = []  # Track access order for LRU eviction
+    
+    def get(self, file_path):
+        """Get cached audio data for a file"""
+        if file_path in self.cache:
+            # Move to end of access order (most recently used)
+            self.access_order.remove(file_path)
+            self.access_order.append(file_path)
+            return self.cache[file_path]
+        return None
+    
+    def put(self, file_path, data):
+        """Store audio data in cache"""
+        # Remove if already exists
+        if file_path in self.cache:
+            self.access_order.remove(file_path)
+        
+        # Evict least recently used if cache is full
+        elif len(self.cache) >= self.max_size:
+            lru_file = self.access_order.pop(0)
+            del self.cache[lru_file]
+        
+        self.cache[file_path] = data
+        self.access_order.append(file_path)
+    
+    def clear(self):
+        """Clear all cached data"""
+        self.cache.clear()
+        self.access_order.clear()
+
+class AudioProcessorWithProgress(QThread):
+    """Enhanced audio processor with detailed progress reporting"""
+    progress_updated = Signal(int, str)  # progress value, message
+    processing_complete = Signal(object)  # processed data
+    processing_error = Signal(str)
+    
+    def __init__(self, file_path, cache=None):
+        super().__init__()
+        self.file_path = file_path
+        self.cache = cache
+        self._is_cancelled = False
+        
+    def cancel(self):
+        """Cancel the processing"""
+        self._is_cancelled = True
+        
+    def run(self):
+        try:
+            # Check cache first
+            if self.cache:
+                cached_data = self.cache.get(self.file_path)
+                if cached_data:
+                    # Even for cached data, show brief loading for user feedback
+                    self.progress_updated.emit(20, "Loading from cache...")
+                    time.sleep(0.1)  # Brief delay to show progress
+                    self.progress_updated.emit(100, "Complete!")
+                    time.sleep(0.1)
+                    self.processing_complete.emit(cached_data)
+                    return
+            
+            if self._is_cancelled:
+                return
+                
+            # Step 1: Reading file
+            self.progress_updated.emit(10, "Reading audio file...")
+            time.sleep(0.1)  # Slightly longer to ensure visibility
+            
+            if self._is_cancelled:
+                return
+                
+            y, sr = librosa.load(self.file_path, sr=TARGET_SR, mono=True)
+            
+            # Step 2: Processing audio
+            self.progress_updated.emit(30, "Processing audio data...")
+            time.sleep(0.1)
+            
+            if self._is_cancelled:
+                return
+            
+            # Step 3: Generating spectrogram
+            self.progress_updated.emit(50, "Generating mel spectrogram...")
+            
+            n_mels = 256
+            hop_length = 512
+            n_fft = 2048
+            
+            mel_spec = librosa.feature.melspectrogram(
+                y=y, 
+                sr=sr, 
+                n_mels=n_mels,
+                n_fft=n_fft,
+                hop_length=hop_length,
+                fmin=MIN_FREQ,
+                fmax=MAX_FREQ
+            )
+            
+            if self._is_cancelled:
+                return
+            
+            # Step 4: Converting to dB
+            self.progress_updated.emit(75, "Converting to dB scale...")
+            mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
+            
+            if self._is_cancelled:
+                return
+            
+            # Step 5: Finalizing
+            self.progress_updated.emit(90, "Finalizing visualization...")
+            time.sleep(0.1)
+            
+            duration_min = len(y) / sr / 60.0
+            
+            result = {
+                'file_path': self.file_path,
+                'audio_data': y,
+                'sample_rate': sr,
+                'spectrogram': mel_spec_db,
+                'duration_min': duration_min
+            }
+            
+            # Cache the result for future use
+            if self.cache:
+                self.cache.put(self.file_path, result)
+            
+            self.progress_updated.emit(100, "Complete!")
+            time.sleep(0.1)  # Brief pause to show completion
+            self.processing_complete.emit(result)
+            
+        except Exception as e:
+            if not self._is_cancelled:
+                self.processing_error.emit(str(e))
+
+# --- Main Window -----------------------------------------------------------
 class Main(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -230,6 +395,9 @@ class Main(QMainWindow):
         self.resize(900, 600)
         self.audio_processor = None
         self._download_cancelled = False
+        
+        # Initialize audio cache
+        self.audio_cache = AudioCache(max_size=15)  # Cache up to 15 files
 
         self._init_winsparkle()
         self._build_ui()
@@ -827,56 +995,69 @@ exit /b 0
             plt.close(fig)
 
     def show_spectrogram_viewer(self, spectrograms):
-        """Show the waveform and spectrogram viewer dialog using matplotlib"""
+        """Show the waveform and spectrogram viewer dialog using matplotlib with loading bar"""
+        
+        # Show viewer window immediately with loading state
         dialog = QDialog(self)
-        dialog.setWindowTitle("Waveform & Spectrogram Viewer")
+        dialog.setWindowTitle("Waveform & Spectrogram Viewer - Loading...")
+        dialog.resize(1000, 600)
         main_layout = QVBoxLayout(dialog)
         
-        # Create matplotlib figure and canvas
+        # Create matplotlib figure and canvas first
         self.figure = Figure(figsize=(12, 8), dpi=100)
         self.canvas = FigureCanvas(self.figure)
-        main_layout.addWidget(self.canvas)
+        
+        canvas_container = QWidget()
+        canvas_layout = QVBoxLayout(canvas_container)
+        canvas_layout.setContentsMargins(0, 0, 0, 0)
+        canvas_layout.addWidget(self.canvas)
+        
+        # Create loading overlay that covers the entire canvas
+        self.loading_overlay = LoadingOverlay(canvas_container)
+        
+        main_layout.addWidget(canvas_container)
 
+        # Create navigation controls
         btn_layout = QHBoxLayout()
 
-        # Previous navigation button
         prev_btn = QPushButton("Previous")
         prev_btn.setEnabled(False)
+        prev_btn.setFixedWidth(80)
 
-        # Analysis button with floating menu
         analysis_btn = QPushButton("Analysis")
-        analysis_btn.setFixedSize(60, 60)  # Make it square for circular shape
+        analysis_btn.setFixedSize(60, 60)
         analysis_btn.setStyleSheet(
             "QPushButton {"
-            "    background-color: #FF7777;"  # Lighter red
+            "    background-color: #FF7777;"
             "    color: white;"
-            "    border: 2px solid white;"    # White border
-            "    border-radius: 30px;"        # Circular shape (half of 60px)
+            "    border: 2px solid white;"
+            "    border-radius: 30px;"
             "    font-weight: bold;"
             "    font-size: 9px;"
             "}"
             "QPushButton:hover {"
-            "    background-color: #FF9999;"  # Even lighter on hover
+            "    background-color: #FF9999;"
             "}"
             "QPushButton:pressed {"
-            "    background-color: #FF5555;"  # Slightly darker when pressed
+            "    background-color: #FF5555;"
             "}"
         )
 
-        # Next navigation button
         next_btn = QPushButton("Next")
         next_btn.setEnabled(len(spectrograms) > 1)
+        next_btn.setFixedWidth(80)
 
         btn_layout.addWidget(prev_btn)
+        btn_layout.addStretch(2)
         btn_layout.addWidget(analysis_btn)
+        btn_layout.addStretch(2)
         btn_layout.addWidget(next_btn)
 
         main_layout.addLayout(btn_layout)
 
-        # Create fan-shaped analysis options that stay in the viewer
+        # Analysis options (same as before)
         analysis_options_layout = QHBoxLayout()
         
-        # Create sub-option buttons
         remove_pulse_btn = QPushButton("Remove Pulse")
         remove_pulse_btn.setFixedSize(100, 30)
         remove_pulse_btn.setStyleSheet(
@@ -898,7 +1079,7 @@ exit /b 0
         
         anomaly_detection_btn = QPushButton("Anomaly Detection")
         anomaly_detection_btn.setFixedSize(120, 30)
-        anomaly_detection_btn.setEnabled(False)  # Disabled temporarily
+        anomaly_detection_btn.setEnabled(False)
         anomaly_detection_btn.setStyleSheet(
             "QPushButton {"
             "    background-color: #CCCCCC;"
@@ -911,7 +1092,7 @@ exit /b 0
         
         ai_anomaly_btn = QPushButton("AI Anomaly Detection")
         ai_anomaly_btn.setFixedSize(140, 30)
-        ai_anomaly_btn.setEnabled(False)  # Disabled temporarily
+        ai_anomaly_btn.setEnabled(False)
         ai_anomaly_btn.setStyleSheet(
             "QPushButton {"
             "    background-color: #CCCCCC;"
@@ -922,12 +1103,10 @@ exit /b 0
             "}"
         )
         
-        # Initially hide the analysis options
         remove_pulse_btn.setVisible(False)
         anomaly_detection_btn.setVisible(False)
         ai_anomaly_btn.setVisible(False)
         
-        # Add buttons to layout with spacing for fan effect
         analysis_options_layout.addStretch(1)
         analysis_options_layout.addWidget(remove_pulse_btn)
         analysis_options_layout.addWidget(anomaly_detection_btn)
@@ -936,59 +1115,106 @@ exit /b 0
         
         main_layout.addLayout(analysis_options_layout)
         
-        # Track visibility state
         options_visible = False
 
-        # Toggle analysis options visibility with fan animation effect
         def toggle_analysis_options():
             nonlocal options_visible
             options_visible = not options_visible
             
             if options_visible:
-                # Show buttons with a fan-like reveal
                 remove_pulse_btn.setVisible(True)
                 anomaly_detection_btn.setVisible(True)
                 ai_anomaly_btn.setVisible(True)
                 analysis_btn.setText("Close")
             else:
-                # Hide buttons
                 remove_pulse_btn.setVisible(False)
                 anomaly_detection_btn.setVisible(False)
                 ai_anomaly_btn.setVisible(False)
                 analysis_btn.setText("Analysis")
 
-        # Connect analysis button to toggle options
         analysis_btn.clicked.connect(toggle_analysis_options)
 
-        # Analysis function implementations
         def run_remove_pulse(spectrogram_data):
             try:
                 from dsp.remove_pulse import process_remove_pulse
                 fp, img = spectrogram_data
-                print(f"Running Remove Pulse on: {os.path.basename(fp)}")
+                print(f"Running Harmonic Extraction on: {os.path.basename(fp)}")
+                
+                # Show processing overlay
+                self.loading_overlay.show_loading("Processing harmonic extraction...")
+                QApplication.processEvents()
+                
+                # Process the audio
                 result = process_remove_pulse(fp)
-                print(f"Remove Pulse completed: {result}")
-                # Show result in a message box
-                QMessageBox.information(dialog, "Remove Pulse", f"Processing completed!\n\nResults:\n{result}")
+                
+                if result['status'] == 'success':
+                    # Update viewer with processed audio
+                    processed_data = {
+                        'file_path': fp,
+                        'audio_data': result['processed_audio'],
+                        'sample_rate': result['sample_rate'],
+                        'spectrogram': None,  # Will be generated in update_viewer_display
+                        'duration_min': len(result['processed_audio']) / result['sample_rate'] / 60.0,
+                        'is_processed': True,
+                        'processing_info': {
+                            'method': 'Harmonic Extraction'
+                        }
+                    }
+                    
+                    # Generate new spectrogram for processed audio
+                    y_processed = result['processed_audio']
+                    sr = result['sample_rate']
+                    
+                    self.loading_overlay.update_progress(50, "Generating processed spectrogram...")
+                    QApplication.processEvents()
+                    
+                    n_mels = 256
+                    hop_length = 512
+                    n_fft = 2048
+                    
+                    mel_spec = librosa.feature.melspectrogram(
+                        y=y_processed, 
+                        sr=sr, 
+                        n_mels=n_mels,
+                        n_fft=n_fft,
+                        hop_length=hop_length,
+                        fmin=MIN_FREQ,
+                        fmax=MAX_FREQ
+                    )
+                    
+                    mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
+                    processed_data['spectrogram'] = mel_spec_db
+                    
+                    self.loading_overlay.update_progress(90, "Finalizing...")
+                    QApplication.processEvents()
+                    
+                    # Update the display with processed data
+                    update_viewer_display(processed_data)
+                    
+                    self.loading_overlay.hide_loading()
+                    
+                    # Show processing results
+                    info_msg = (
+                        f"Harmonic extraction completed!\n\n"
+                        f"The viewer now shows the processed audio with harmonic components only."
+                    )
+                    QMessageBox.information(dialog, "Harmonic Extraction Complete", info_msg)
+                else:
+                    self.loading_overlay.hide_loading()
+                    QMessageBox.critical(dialog, "Processing Error", f"Error: {result['error_message']}")
+                    
             except ImportError:
+                self.loading_overlay.hide_loading()
                 print("Remove Pulse module not found")
                 QMessageBox.warning(dialog, "Module Not Found", "Remove Pulse module not found in dsp folder.")
             except Exception as e:
-                print(f"Error in Remove Pulse: {e}")
-                QMessageBox.critical(dialog, "Error", f"Error in Remove Pulse:\n{str(e)}")
+                self.loading_overlay.hide_loading()
+                print(f"Error in Harmonic Extraction: {e}")
+                QMessageBox.critical(dialog, "Error", f"Error in Harmonic Extraction:\n{str(e)}")
 
-        def run_anomaly_detection(spectrogram_data):
-            # Disabled for now
-            QMessageBox.information(dialog, "Feature Disabled", "Anomaly Detection is temporarily disabled.")
-
-        def run_ai_anomaly_detection(spectrogram_data):
-            # Disabled for now
-            QMessageBox.information(dialog, "Feature Disabled", "AI Anomaly Detection is temporarily disabled.")
-
-        # Connect only the enabled button
         remove_pulse_btn.clicked.connect(lambda: run_remove_pulse(spectrograms[index]))
 
-        # Add gain control for spectrogram
+        # Add gain control
         gain_layout = QHBoxLayout()
         gain_label = QLabel("Spectrogram gain (dB):")
         gain_slider = QSlider(Qt.Horizontal)
@@ -1001,40 +1227,114 @@ exit /b 0
         main_layout.addLayout(gain_layout)
 
         index = 0
+        current_processor = None
         
-        def update(idx):
-            nonlocal index
-            index = idx
+        # Show dialog immediately
+        dialog.show()
+        QApplication.processEvents()
+        
+        # Start background preloading immediately
+        self._preload_cache(spectrograms[:min(3, len(spectrograms))])
+        
+        def update_with_loading(idx):
+            """Update viewer with loading bar for new files"""
+            nonlocal index, current_processor
             
+            # Cancel any existing processing
+            if current_processor and current_processor.isRunning():
+                current_processor.cancel()
+                current_processor.terminate()
+                current_processor.wait()
+            
+            index = idx
+            fp, _ = spectrograms[idx]
+            filename = os.path.basename(fp)
+            
+            # Update window title with current file info
+            dialog.setWindowTitle(f"Waveform & Spectrogram Viewer - File {idx + 1} of {len(spectrograms)}: {filename}")
+            
+            # Check if data is already cached
+            cached_data = self.audio_cache.get(fp)
+            if cached_data:
+                # Use cached data immediately
+                try:
+                    update_viewer_display(cached_data)
+                    prev_btn.setEnabled(idx > 0)
+                    next_btn.setEnabled(idx < len(spectrograms) - 1)
+                    self._preload_adjacent_files(spectrograms, idx)
+                    return
+                except Exception as e:
+                    print(f"Error using cached data: {e}")
+            
+            # Show loading overlay BEFORE disabling buttons
+            self.loading_overlay.show_loading(f"Loading {filename}...")
+            
+            # Disable navigation during loading
+            prev_btn.setEnabled(False)
+            next_btn.setEnabled(False)
+            
+            # Create and start processor
+            current_processor = AudioProcessorWithProgress(fp, self.audio_cache)
+            
+            def on_progress(value, message):
+                if self.loading_overlay.isVisible():
+                    self.loading_overlay.update_progress(value, message)
+            
+            def on_complete(result):
+                try:
+                    update_viewer_display(result)
+                    self.loading_overlay.hide_loading()
+                    
+                    # Re-enable navigation
+                    prev_btn.setEnabled(idx > 0)
+                    next_btn.setEnabled(idx < len(spectrograms) - 1)
+                    
+                    # Preload adjacent files in background
+                    self._preload_adjacent_files(spectrograms, idx)
+                    
+                except Exception as e:
+                    print(f"Error updating display: {e}")
+                    self.loading_overlay.hide_loading()
+                    QMessageBox.critical(dialog, "Error", f"Error updating display:\n{str(e)}")
+                    # Re-enable buttons even on error
+                    prev_btn.setEnabled(idx > 0)
+                    next_btn.setEnabled(idx < len(spectrograms) - 1)
+            
+            def on_error(error_msg):
+                self.loading_overlay.hide_loading()
+                prev_btn.setEnabled(idx > 0)
+                next_btn.setEnabled(idx < len(spectrograms) - 1)
+                QMessageBox.critical(dialog, "Processing Error", f"Failed to process audio:\n{error_msg}")
+            
+            current_processor.progress_updated.connect(on_progress)
+            current_processor.processing_complete.connect(on_complete)
+            current_processor.processing_error.connect(on_error)
+            current_processor.start()
+        
+        def update_viewer_display(result):
+            """Update the matplotlib display with processed data"""
             try:
-                # Clear the figure
                 self.figure.clear()
                 
-                fp, _ = spectrograms[idx] # Ignore pre-computed spectrogram, generate fresh
-                dialog.setWindowTitle(os.path.basename(fp))
+                fp = result['file_path']
+                y = result['audio_data']
+                sr = result['sample_rate']
+                mel_spec_db = result['spectrogram']
+                duration_min = result['duration_min']
+                is_processed = result.get('is_processed', False)
+                processing_info = result.get('processing_info', {})
                 
-                # Load audio for waveform
-                y, sr = librosa.load(fp, sr=TARGET_SR, mono=True)
-                
-                # Calculate timing
-                duration_min = len(y) / sr / 60.0
-                
-                print(f"File: {os.path.basename(fp)}")
-                print(f"Audio: {len(y)} samples, {y.min():.3f} to {y.max():.3f}")
-                print(f"Duration: {duration_min:.2f} min")
-                
-                # Create subplots - waveform on top, spectrogram on bottom
                 ax1 = self.figure.add_subplot(2, 1, 1)
-                ax2 = self.figure.add_subplot(2, 1, 2, sharex=ax1)  # Share x-axis
+                ax2 = self.figure.add_subplot(2, 1, 2, sharex=ax1)
                 
-                # --- WAVEFORM PLOT ---
+                # Waveform plot
                 time_axis = np.linspace(0, duration_min, len(y))
-                ax1.plot(time_axis, y, color='black', linewidth=0.5)
+                color = 'blue' if is_processed else 'black'
+                ax1.plot(time_axis, y, color=color, linewidth=0.5)
                 ax1.set_ylabel('Amplitude')
                 ax1.grid(True, alpha=0.3)
                 ax1.set_xlim(0, duration_min)
                 
-                # Set proper amplitude range with padding
                 y_min, y_max = y.min(), y.max()
                 y_range = y_max - y_min
                 if y_range < 1e-6:
@@ -1042,67 +1342,52 @@ exit /b 0
                 else:
                     padding = y_range * 0.1
                 ax1.set_ylim(y_min - padding, y_max + padding)
-                ax1.set_title(f'Waveform & Spectrogram: {os.path.basename(fp)}')
                 
-                # --- SPECTROGRAM PLOT ---
-                # Generate mel spectrogram using librosa
-                n_mels = 256
-                hop_length = 512
-                n_fft = 2048
-                
-                # Compute mel spectrogram
-                mel_spec = librosa.feature.melspectrogram(
-                    y=y, 
-                    sr=sr, 
-                    n_mels=n_mels,
-                    n_fft=n_fft,
-                    hop_length=hop_length,
-                    fmin=MIN_FREQ,
-                    fmax=MAX_FREQ
-                )
-                
-                # Convert to dB scale
-                mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
-                
-                # Apply gain from slider
+                # Update title based on processing status
+                title_base = f'{os.path.basename(fp)}'
+                if is_processed:
+                    method = processing_info.get('method', 'Processed')
+                    title = f'[{method}] {title_base}'
+                    ax1.set_title(f'Processed Waveform & Spectrogram: {title}')
+                else:
+                    ax1.set_title(f'Waveform & Spectrogram: {title_base}')
+
+                # Spectrogram plot with gain
                 db_gain = gain_slider.value()
-                if db_gain > 0:
-                    mel_spec_db = mel_spec_db + db_gain
+                mel_spec_display = mel_spec_db + db_gain if db_gain > 0 else mel_spec_db
                 
-                # Create time axis for spectrogram (in minutes)
-                spec_time_frames = mel_spec_db.shape[1]
+                hop_length = 512
+                spec_time_frames = mel_spec_display.shape[1]
                 spec_duration_min = spec_time_frames * hop_length / sr / 60.0
                 
-                # Display spectrogram
-                im = ax2.imshow(
-                    mel_spec_db,
+                # Use different colormap for processed audio
+                # cmap = 'viridis' if is_processed else 'plasma'
+                cmap = 'plasma' if is_processed else 'plasma'
+                
+                ax2.imshow(
+                    mel_spec_display,
                     aspect='auto',
-                    origin='lower',  # Low frequencies at bottom
+                    origin='lower',
                     extent=[0, spec_duration_min, 0, MAX_FREQ],
-                    cmap='plasma'
+                    cmap=cmap
                 )
                 
-                # Set consistent font size for all text elements
+                # Configure plot appearance
                 font_size = 8
-                
-                # Configure waveform plot
                 ax1.set_ylabel('Amplitude', fontsize=font_size)
-                ax1.set_title(f'Waveform & Spectrogram: {os.path.basename(fp)}', fontsize=font_size)
                 ax1.tick_params(axis='both', which='major', labelsize=font_size, length=6)
-                ax1.set_xticklabels([])  # Remove labels from top plot
+                ax1.set_xticklabels([])
                 
-                # Configure spectrogram plot
                 ax2.set_xlabel('Time (min)', fontsize=font_size)
                 ax2.set_ylabel('Frequency (kHz)', fontsize=font_size)
                 ax2.set_ylim(0, MAX_FREQ)
                 ax2.set_xlim(0, spec_duration_min)
                 
-                # Set frequency ticks to match export format
                 freqs = [0, 2000, 4000, 6000, 10000, 12000, 14000, 16000]
                 ax2.set_yticks(freqs)
                 ax2.set_yticklabels([_hz_to_k_label(f) for f in freqs], fontsize=font_size)
                 
-                # Set time ticks with consistent intervals
+                # Set time ticks
                 if spec_duration_min <= 5:
                     time_interval = 1.0
                 elif spec_duration_min <= 15:
@@ -1116,41 +1401,74 @@ exit /b 0
                 ax2.set_xticks(time_ticks)
                 ax2.set_xticklabels([f"{int(t)}" for t in time_ticks], fontsize=font_size)
                 ax2.tick_params(axis='both', which='major', labelsize=font_size, length=6)
-                
-                # Apply same time ticks to waveform
                 ax1.set_xticks(time_ticks)
-
-                # Adjust layout and refresh
+                
                 self.figure.tight_layout()
                 self.canvas.draw()
-        
-                # Force canvas update
-                self.canvas.flush_events()
-                
-                # Enable/disable navigation buttons
-                prev_btn.setEnabled(idx > 0)
-                next_btn.setEnabled(idx < len(spectrograms) - 1)
-                
-                print(f"Matplotlib waveform and spectrogram created successfully")
-                print(f"Spectrogram shape: {mel_spec_db.shape}")
-                print(f"Time alignment: waveform={duration_min:.2f}min, spec={spec_duration_min:.2f}min")
                 
             except Exception as e:
-                print(f"Error updating viewer: {e}")
+                print(f"Error in update_viewer_display: {e}")
                 import traceback
                 traceback.print_exc()
-
-        # Connect UI elements
-        prev_btn.clicked.connect(lambda: update(index-1))
-        next_btn.clicked.connect(lambda: update(index+1))
-        gain_slider.valueChanged.connect(lambda v: (gain_value.setText(f"{v} dB"), update(index)))
         
-        # Set initial view
-        update(0)
+        # Connect navigation
+        prev_btn.clicked.connect(lambda: update_with_loading(index-1))
+        next_btn.clicked.connect(lambda: update_with_loading(index+1))
         
-        # Set dialog size and show
-        dialog.resize(1000, 600)
+        # Optimized gain slider
+        def update_gain():
+            gain_value.setText(f"{gain_slider.value()} dB")
+            if not self.loading_overlay.isVisible():
+                fp, _ = spectrograms[index]
+                cached_data = self.audio_cache.get(fp)
+                if cached_data:
+                    update_viewer_display(cached_data)
+        
+        gain_slider.valueChanged.connect(update_gain)
+        
+        # Load first file immediately after showing dialog
+        QTimer.singleShot(50, lambda: update_with_loading(0))
+        
         dialog.exec()
+        
+        # Cleanup when dialog closes
+        if current_processor and current_processor.isRunning():
+            current_processor.cancel()
+            current_processor.terminate()
+            current_processor.wait()
+
+    def _preload_cache(self, file_list):
+        """Preload audio files into cache in background"""
+        def preload_worker():
+            for fp, _ in file_list:
+                if not self.audio_cache.get(fp):  # Only load if not already cached
+                    try:
+                        processor = AudioProcessorWithProgress(fp, self.audio_cache)
+                        processor.run()  # Run synchronously in background thread
+                    except Exception as e:
+                        print(f"Error preloading {fp}: {e}")
+        
+        # Run preloading in background thread
+        threading.Thread(target=preload_worker, daemon=True).start()
+    
+    def _preload_adjacent_files(self, spectrograms, current_idx):
+        """Preload files adjacent to current index in background"""
+        adjacent_files = []
+        
+        # Add previous file
+        if current_idx > 0:
+            adjacent_files.append(spectrograms[current_idx - 1])
+        
+        # Add next file
+        if current_idx < len(spectrograms) - 1:
+            adjacent_files.append(spectrograms[current_idx + 1])
+        
+        # Add next 2 files for better prefetching
+        for i in range(current_idx + 2, min(current_idx + 4, len(spectrograms))):
+            adjacent_files.append(spectrograms[i])
+        
+        if adjacent_files:
+            self._preload_cache(adjacent_files)
 
     def closeEvent(self, event):
         global _ws
@@ -1158,6 +1476,10 @@ exit /b 0
         if self.audio_processor and self.audio_processor.isRunning():
             self.audio_processor.terminate()
             self.audio_processor.wait()
+        
+        # Clear audio cache
+        if hasattr(self, 'audio_cache'):
+            self.audio_cache.clear()
             
         if platform.system() == "Windows" and _ws:
             try: 
