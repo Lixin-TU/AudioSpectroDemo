@@ -4,6 +4,9 @@ import os
 import platform
 import pathlib
 import logging  # Add this import
+import tempfile  # Add this missing import
+import urllib.request  # Add this missing import
+import subprocess  # Add this missing import
 
 import ctypes
 import shutil
@@ -80,6 +83,7 @@ from pyqtgraph import PlotWidget, ImageItem
 # Add matplotlib imports for the new viewer
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+from matplotlib.patches import Rectangle  # Add this import
 
 # Global variables - will be set up in Main constructor
 WINSPARKLE_LOG_PATH = None
@@ -1079,14 +1083,21 @@ exit /b 0
         
         anomaly_detection_btn = QPushButton("Anomaly Detection")
         anomaly_detection_btn.setFixedSize(120, 30)
-        anomaly_detection_btn.setEnabled(False)
+        anomaly_detection_btn.setEnabled(True)  # Enable the button
         anomaly_detection_btn.setStyleSheet(
             "QPushButton {"
-            "    background-color: #CCCCCC;"
-            "    color: #666666;"
-            "    border: 1px solid #999999;"
+            "    background-color: #2196F3;"  # Blue color for active button
+            "    color: white;"
+            "    border: 1px solid white;"
             "    border-radius: 15px;"
             "    font-size: 8px;"
+            "    font-weight: bold;"
+            "}"
+            "QPushButton:hover {"
+            "    background-color: #42A5F5;"
+            "}"
+            "QPushButton:pressed {"
+            "    background-color: #1976D2;"
             "}"
         )
         
@@ -1212,7 +1223,83 @@ exit /b 0
                 print(f"Error in Harmonic Extraction: {e}")
                 QMessageBox.critical(dialog, "Error", f"Error in Harmonic Extraction:\n{str(e)}")
 
+        def run_anomaly_detection(spectrogram_data):
+            try:
+                # Debug: Check if the module exists
+                import sys
+                import os
+                print(f"Python path: {sys.path}")
+                print(f"Current working directory: {os.getcwd()}")
+                print(f"Looking for module at: {os.path.join(os.getcwd(), 'dsp', 'anomaly_detection.py')}")
+                print(f"Module exists: {os.path.exists(os.path.join(os.getcwd(), 'dsp', 'anomaly_detection.py'))}")
+                print(f"__init__.py exists: {os.path.exists(os.path.join(os.getcwd(), 'dsp', '__init__.py'))}")
+                
+                from dsp.anomaly_detection import process_anomaly_detection
+                fp, img = spectrogram_data
+                print(f"Running Anomaly Detection on: {os.path.basename(fp)}")
+                
+                # Show processing overlay
+                self.loading_overlay.show_loading("Processing anomaly detection...")
+                QApplication.processEvents()
+                
+                # Get current spectrogram from cache if available
+                cached_data = self.audio_cache.get(fp)
+                mel_spec = cached_data['spectrogram'] if cached_data else None
+                
+                # Process anomaly detection
+                result = process_anomaly_detection(fp, mel_spec)
+                
+                if result['status'] == 'success':
+                    # Update viewer with anomaly detection results
+                    processed_data = cached_data.copy() if cached_data else {
+                        'file_path': fp,
+                        'audio_data': None,
+                        'sample_rate': None,
+                        'spectrogram': result['spectrogram'],
+                        'duration_min': None
+                    }
+                    
+                    processed_data.update({
+                        'is_processed': True,
+                        'processing_info': {
+                            'method': 'Anomaly Detection',
+                            'anomaly_results': result
+                        }
+                    })
+                    
+                    self.loading_overlay.update_progress(90, "Finalizing visualization...")
+                    QApplication.processEvents()
+                    
+                    # Update the display with anomaly detection results
+                    update_viewer_display(processed_data)
+                    
+                    self.loading_overlay.hide_loading()
+                    
+                    # Show results summary
+                    selected_count = len(result['selected_indices'])
+                    info_msg = (
+                        f"Anomaly Detection completed!\n\n"
+                        f"Found {selected_count} anomalous segments "
+                        f"(top {result['top_percent']}%)\n\n"
+                        f"The spectrogram now highlights detected anomalies."
+                    )
+                    QMessageBox.information(dialog, "Anomaly Detection Complete", info_msg)
+                else:
+                    self.loading_overlay.hide_loading()
+                    QMessageBox.critical(dialog, "Processing Error", f"Error: {result['error_message']}")
+                    
+            except ImportError as ie:
+                self.loading_overlay.hide_loading()
+                print(f"Import error details: {ie}")
+                print("Anomaly Detection module not found")
+                QMessageBox.warning(dialog, "Module Not Found", f"Anomaly Detection module not found in dsp folder.\nError: {ie}")
+            except Exception as e:
+                self.loading_overlay.hide_loading()
+                print(f"Error in Anomaly Detection: {e}")
+                QMessageBox.critical(dialog, "Error", f"Error in Anomaly Detection:\n{str(e)}")
+
         remove_pulse_btn.clicked.connect(lambda: run_remove_pulse(spectrograms[index]))
+        anomaly_detection_btn.clicked.connect(lambda: run_anomaly_detection(spectrograms[index]))
 
         # Add gain control
         gain_layout = QHBoxLayout()
@@ -1295,7 +1382,7 @@ exit /b 0
                 except Exception as e:
                     print(f"Error updating display: {e}")
                     self.loading_overlay.hide_loading()
-                    QMessageBox.critical(dialog, "Error", f"Error updating display:\n{str(e)}")
+                    QMessageBox.critical(dialog, "Error", f"Error updating display:\n{error_msg}")
                     # Re-enable buttons even on error
                     prev_btn.setEnabled(idx > 0)
                     next_btn.setEnabled(idx < len(spectrograms) - 1)
@@ -1327,21 +1414,28 @@ exit /b 0
                 ax1 = self.figure.add_subplot(2, 1, 1)
                 ax2 = self.figure.add_subplot(2, 1, 2, sharex=ax1)
                 
-                # Waveform plot
-                time_axis = np.linspace(0, duration_min, len(y))
-                color = 'blue' if is_processed else 'black'
-                ax1.plot(time_axis, y, color=color, linewidth=0.5)
+                # Waveform plot (only if audio data available)
+                if y is not None:
+                    time_axis = np.linspace(0, duration_min, len(y))
+                    color = 'blue' if is_processed else 'black'
+                    ax1.plot(time_axis, y, color=color, linewidth=0.5)
+                    
+                    y_min, y_max = y.min(), y.max()
+                    y_range = y_max - y_min
+                    if y_range < 1e-6:
+                        padding = 0.1
+                    else:
+                        padding = y_range * 0.1
+                    ax1.set_ylim(y_min - padding, y_max + padding)
+                else:
+                    # Hide waveform plot if no audio data
+                    ax1.text(0.5, 0.5, 'Waveform not available', 
+                            horizontalalignment='center', verticalalignment='center',
+                            transform=ax1.transAxes, fontsize=12, color='gray')
+                    ax1.set_ylim(0, 1)
+                
                 ax1.set_ylabel('Amplitude')
                 ax1.grid(True, alpha=0.3)
-                ax1.set_xlim(0, duration_min)
-                
-                y_min, y_max = y.min(), y.max()
-                y_range = y_max - y_min
-                if y_range < 1e-6:
-                    padding = 0.1
-                else:
-                    padding = y_range * 0.1
-                ax1.set_ylim(y_min - padding, y_max + padding)
                 
                 # Update title based on processing status
                 title_base = f'{os.path.basename(fp)}'
@@ -1358,13 +1452,15 @@ exit /b 0
                 
                 hop_length = 512
                 spec_time_frames = mel_spec_display.shape[1]
-                spec_duration_min = spec_time_frames * hop_length / sr / 60.0
+                if sr:
+                    spec_duration_min = spec_time_frames * hop_length / sr / 60.0
+                else:
+                    spec_duration_min = duration_min or 1.0
                 
                 # Use different colormap for processed audio
-                # cmap = 'viridis' if is_processed else 'plasma'
-                cmap = 'plasma' if is_processed else 'plasma'
+                cmap = 'plasma'
                 
-                ax2.imshow(
+                im = ax2.imshow(
                     mel_spec_display,
                     aspect='auto',
                     origin='lower',
@@ -1372,6 +1468,36 @@ exit /b 0
                     cmap=cmap
                 )
                 
+                # Add anomaly detection overlays if available
+                if is_processed and processing_info.get('method') == 'Anomaly Detection':
+                    anomaly_results = processing_info.get('anomaly_results', {})
+                    selected_indices = anomaly_results.get('selected_indices', [])
+                    segment_starts = anomaly_results.get('segment_starts', [])
+                    segment_width = anomaly_results.get('segment_width', 0)
+                    n_mels = anomaly_results.get('n_mels', mel_spec_display.shape[0])
+                    scores = anomaly_results.get('scores', [])
+                    
+                    # Convert segment positions to time
+                    if selected_indices and segment_starts and sr:
+                        for idx in selected_indices:
+                            start_frame = segment_starts[idx]
+                            start_time = start_frame * hop_length / sr / 60.0
+                            width_time = segment_width * hop_length / sr / 60.0
+                            score = scores[idx] if idx < len(scores) else 0
+                            
+                            # Add rectangle overlay with same style as template
+                            rect = Rectangle((start_time, 0), width_time, MAX_FREQ,
+                                           edgecolor='orange', facecolor='orange', 
+                                           alpha=0.35, linewidth=0.5)  # Match template style
+                            ax2.add_patch(rect)
+                            
+                            # Add segment number and score label with same style as template
+                            ax2.text(start_time + width_time/20, MAX_FREQ * 0.95, 
+                                #    f"[S{idx+1}]\n",  # Match template format
+                                   f"", 
+                                   color='orange', fontsize=10, ha='left', va='top',
+                                   bbox=dict(facecolor='black', alpha=0.5, edgecolor='none', boxstyle='round,pad=0.2'))
+
                 # Configure plot appearance
                 font_size = 8
                 ax1.set_ylabel('Amplitude', fontsize=font_size)
@@ -1402,6 +1528,8 @@ exit /b 0
                 ax2.set_xticklabels([f"{int(t)}" for t in time_ticks], fontsize=font_size)
                 ax2.tick_params(axis='both', which='major', labelsize=font_size, length=6)
                 ax1.set_xticks(time_ticks)
+                if y is not None:
+                    ax1.set_xlim(0, duration_min)
                 
                 self.figure.tight_layout()
                 self.canvas.draw()
