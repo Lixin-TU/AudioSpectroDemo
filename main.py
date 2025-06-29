@@ -1399,7 +1399,7 @@ exit /b 0
                 except Exception as e:
                     print(f"Error updating display: {e}")
                     self.loading_overlay.hide_loading()
-                    QMessageBox.critical(dialog, "Error", f"Error updating display:\n{error_msg}")
+                    QMessageBox.critical(dialog, "Error updating display:\n{error_msg}")
                     # Re-enable buttons even on error
                     prev_btn.setEnabled(idx > 0)
                     next_btn.setEnabled(idx < len(spectrograms) - 1)
