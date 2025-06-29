@@ -35,6 +35,7 @@ jobs:
             librosa \
             soundfile \
             numpy \
+            scipy \
             pyinstaller-hooks-contrib \
             matplotlib \
 
@@ -59,8 +60,11 @@ jobs:
                       --exclude-module tkinter \
                       --exclude-module test \
                       --hidden-import=PIL._tkinter_finder \
+                      --hidden-import=scipy.special.cython_special \
+                      --hidden-import=scipy._lib.messagestream \
                       --collect-all soundfile \
                       --collect-all librosa \
+                      --collect-all scipy \
                       --collect-all ssl \
                       --collect-all certifi
 
