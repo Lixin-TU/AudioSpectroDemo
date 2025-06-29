@@ -654,7 +654,7 @@ exit /b 0
         self._download_completed = False  # New flag to track download completion
         
         # Only connect once to avoid duplicate signals
-        progress.canceled.connect(self._on_download_cancelled)
+        progress.canceled.connect(self._handle_download_cancel)
 
         def _safely_close_progress():
             if hasattr(self, '_download_progress') and self._download_progress:
@@ -682,10 +682,15 @@ exit /b 0
         try:
             # Add headers to avoid potential blocking
             req = urllib.request.Request(url)
-            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.27')
+            req.add_header('User-Agent', 'AudioSpectroDemo')
 
+            print(f"Starting download from: {url}")  # Debug output
+            print(f"Downloading to: {new_exe_temp_path}")  # Debug output
+            
             # Actually perform the download
             urllib.request.urlretrieve(url, new_exe_temp_path, reporthook=_hook)
+            
+            print("Download completed successfully")  # Debug output
             
             # Ensure progress dialog is closed - safely
             _safely_close_progress()
@@ -808,7 +813,19 @@ exit /b 0
     def _handle_download_cancel(self):
         """Handle download cancellation from the progress dialog"""
         self._download_cancelled = True
-        
+        if hasattr(self, '_download_progress') and self._download_progress:
+            self._download_progress.close()
+            self._download_progress = None
+
+    def _on_download_cancelled(self):
+        """Handle download cancellation from the progress dialog"""
+        # Only handle cancellation if download hasn't completed
+        if not hasattr(self, '_download_completed') or not self._download_completed:
+            self._download_cancelled = True
+            if hasattr(self, '_download_progress') and self._download_progress:
+                self._download_progress.close()
+                self._download_progress = None
+
     def _launch_update_process(self, new_exe_temp_path, current_app_info):
         """Launch the update process using a script"""
         dest_exe_name = filename_from_url(
@@ -1632,28 +1649,17 @@ exit /b 0
         # Only handle cancellation if download hasn't completed
         if not hasattr(self, '_download_completed') or not self._download_completed:
             self._download_cancelled = True
-            # If we have a temp file path, try to clean it up later
-            # Not cleaning up immediately as the file might still be in use
-            pass
-        else:
-            pass
+            if hasattr(self, '_download_progress') and self._download_progress:
+                self._download_progress.close()
+                self._download_progress = None
 
 if __name__ == "__main__":
-    try:
-        # Set up basic error handling
-        app = QApplication(sys.argv)
-        window = Main()
-        window.show()
-        sys.exit(app.exec())
-    except Exception as e:
-        # If the app fails to start, show an error dialog
-        error_msg = f"Failed to start application: {str(e)}\n\nPlease check the update_log.txt file for details."
-        print(error_msg)
-        logging.error(f"Application failed to start: {e}", exc_info=True)
-        
-        try:
-            if QApplication.instance():
-                QMessageBox.critical(None, "Application Error", error_msg)
-        except:
-            pass
-        sys.exit(1)
+    # Create QApplication instance
+    app = QApplication(sys.argv)
+    
+    # Create and show main window
+    window = Main()
+    window.show()
+    
+    # Start event loop
+    sys.exit(app.exec())
