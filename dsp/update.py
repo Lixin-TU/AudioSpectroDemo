@@ -56,7 +56,7 @@ def filename_from_url(url: str, default: str = "update.exe") -> str:
 def check_for_updates_async():
     """Check for updates in a separate thread"""
     try:
-        current = "0.2.26"
+        current = "0.2.27"
         appcast = "https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml"
         info = parse_appcast_xml(appcast)
         if not info:
