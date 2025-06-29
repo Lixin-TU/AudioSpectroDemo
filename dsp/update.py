@@ -4,6 +4,7 @@ import platform
 import threading
 import logging
 import urllib.request
+import ssl                           # <-- add this
 from urllib.parse import urlsplit, unquote
 import xml.etree.ElementTree as ET
 from PySide6.QtCore import QObject, Signal
@@ -18,7 +19,9 @@ update_checker = UpdateChecker()
 def parse_appcast_xml(url: str) -> dict:
     """Parse the appcast XML to get update information"""
     try:
-        with urllib.request.urlopen(url, timeout=15) as resp:
+        # create an unverified SSL context so the exe can fetch from HTTPS
+        ctx = ssl._create_unverified_context()  
+        with urllib.request.urlopen(url, timeout=15, context=ctx) as resp:
             xml_data = resp.read()
         root = ET.fromstring(xml_data)
         items = root.findall('.//item')
