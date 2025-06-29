@@ -56,9 +56,13 @@ jobs:
           pyinstaller --noconfirm --noconsole --onefile main.py \
                       --name AudioSpectroDemo \
                       --add-data "WinSparkle.dll;." \
-                      --runtime-tmpdir . \
                       --exclude-module tkinter \
                       --exclude-module test \
+                      --exclude-module unittest \
+                      --exclude-module distutils \
+                      --strip \
+                      --noupx \
+                      --clean \
                       --hidden-import=PIL._tkinter_finder \
                       --hidden-import=scipy.special.cython_special \
                       --hidden-import=scipy._lib.messagestream \
