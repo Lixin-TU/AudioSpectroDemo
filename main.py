@@ -680,6 +680,10 @@ exit /b 0
                 QApplication.processEvents()
 
         try:
+            # Add SSL context for compiled executable
+            import ssl
+            ctx = ssl._create_unverified_context()
+            
             # Add headers to avoid potential blocking
             req = urllib.request.Request(url)
             req.add_header('User-Agent', 'AudioSpectroDemo/0.2.27')
@@ -687,9 +691,34 @@ exit /b 0
             print(f"Starting download from: {url}")  # Debug output
             print(f"Downloading to: {new_exe_temp_path}")  # Debug output
             
-            # Actually perform the download
-            urllib.request.urlretrieve(url, new_exe_temp_path, reporthook=_hook)
-            
+            # Use urlopen with SSL context instead of urlretrieve
+            with urllib.request.urlopen(req, context=ctx) as response:
+                total_size = int(response.headers.get('Content-Length', 0))
+                downloaded = 0
+                block_size = 8192
+                
+                with open(new_exe_temp_path, 'wb') as f:
+                    while True:
+                        if self._download_cancelled:
+                            raise Exception("Download cancelled by user")
+                            
+                        chunk = response.read(block_size)
+                        if not chunk:
+                            break
+                            
+                        f.write(chunk)
+                        downloaded += len(chunk)
+                        
+                        # Update progress
+                        if total_size > 0:
+                            pct = int(downloaded * 100 / total_size)
+                            if hasattr(self, '_download_progress') and self._download_progress:
+                                self._download_progress.setValue(min(pct, 100))
+                                downloaded_mb = downloaded / (1024*1024)
+                                total_mb = total_size / (1024*1024)
+                                self._download_progress.setLabelText(f"Downloading {new_exe_name}... {downloaded_mb:.1f}/{total_mb:.1f} MB")
+                            QApplication.processEvents()
+
             print("Download completed successfully")  # Debug output
             
             # Ensure progress dialog is closed - safely
@@ -791,15 +820,26 @@ exit /b 0
             
             if not self._download_cancelled:
                 error_msg = str(e)
+                error_type = type(e).__name__
+                
+                # More detailed error information
+                detailed_msg = f"Error Type: {error_type}\nError: {error_msg}"
+                
                 if "HTTP Error" in error_msg:
-                    error_msg += "\n\nThis might be a temporary network issue. Please try again later."
+                    detailed_msg += "\n\nThis might be a temporary network issue. Please try again later."
                 elif "SSL" in error_msg or "certificate" in error_msg.lower():
-                    error_msg += "\n\nThis might be a certificate issue. Please check your internet connection."
-                QMessageBox.critical(self, "Update Error", f"Failed to download update:\n{error_msg}")
+                    detailed_msg += "\n\nSSL certificate issue. This is common in compiled executables."
+                elif "urlopen error" in error_msg:
+                    detailed_msg += "\n\nNetwork connection issue. Check your internet connection."
+                elif "Permission" in error_msg:
+                    detailed_msg += "\n\nPermission denied. Try running as administrator."
+                    
+                QMessageBox.critical(self, "Update Error", f"Failed to download update:\n{detailed_msg}")
+            
             try:
                 os.remove(new_exe_temp_path)
-            except Exception as e:
-                pass
+            except Exception as cleanup_error:
+                print(f"Cleanup error: {cleanup_error}")
 
     def _cancel_download(self, file_path):
         """Handle download cancellation - legacy method"""

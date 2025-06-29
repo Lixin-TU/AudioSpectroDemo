@@ -60,7 +60,9 @@ jobs:
                       --exclude-module test \
                       --hidden-import=PIL._tkinter_finder \
                       --collect-all soundfile \
-                      --collect-all librosa
+                      --collect-all librosa \
+                      --collect-all ssl \
+                      --collect-all certifi
 
       # 6. Stash the build output so you can download it from the workflow run if the release‐creation step fails.
       - name: Archive build artifacts
