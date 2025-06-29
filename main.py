@@ -682,7 +682,7 @@ exit /b 0
         try:
             # Add headers to avoid potential blocking
             req = urllib.request.Request(url)
-            req.add_header('User-Agent', 'AudioSpectroDemo')
+            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.27')
 
             print(f"Starting download from: {url}")  # Debug output
             print(f"Downloading to: {new_exe_temp_path}")  # Debug output
