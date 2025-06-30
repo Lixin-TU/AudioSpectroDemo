@@ -57,13 +57,17 @@ jobs:
                       --name AudioSpectroDemo \
                       --add-data "WinSparkle.dll;." \
                       --exclude-module tkinter \
-                      --exclude-module test \
-                      --exclude-module unittest \
                       --noupx \
                       --clean \
                       --hidden-import=PIL._tkinter_finder \
                       --hidden-import=scipy.special.cython_special \
                       --hidden-import=scipy._lib.messagestream \
+                      --hidden-import=unittest.case \
+                      --hidden-import=unittest.loader \
+                      --hidden-import=unittest.main \
+                      --hidden-import=unittest.result \
+                      --hidden-import=unittest.runner \
+                      --hidden-import=unittest.suite \
                       --collect-all soundfile \
                       --collect-all librosa \
                       --collect-all scipy \

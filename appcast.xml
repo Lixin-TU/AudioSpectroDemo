@@ -4,11 +4,11 @@
   <channel>
     <title>AudioSpectroDemo Updates</title>
     <item>
-      <title>Version 0.2.29</title>
+      <title>Version 0.2.30</title>
       <enclosure
-        url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.2.29/AudioSpectroDemo-v0.2.29.exe"
-        sparkle:version="0.2.29"
-        sparkle:shortVersionString="0.2.29"
+        url="https://github.com/Lixin-TU/AudioSpectroDemo/releases/download/v0.2.30/AudioSpectroDemo-v0.2.30.exe"
+        sparkle:version="0.2.30"
+        sparkle:shortVersionString="0.2.30"
         type="application/octet-stream"/>
     </item>
 
