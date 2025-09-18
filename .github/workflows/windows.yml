@@ -16,6 +16,8 @@ jobs:
       # 1. Grab the source code
       - name: Check out code
         uses: actions/checkout@v4
+        with:
+          lfs: true
 
       # 2. Set up the exact Python version your app targets
       - name: Set up Python 3.12
@@ -28,16 +30,9 @@ jobs:
         shell: bash
         run: |
           python -m pip install --upgrade pip
-          pip install \
-            pyinstaller \
-            pyside6 \
-            pyqtgraph \
-            librosa \
-            soundfile \
-            numpy \
-            scipy \
-            pyinstaller-hooks-contrib \
-            matplotlib \
+          pip install -r requirements.txt
+          # Build-time tools
+          pip install pyinstaller pyinstaller-hooks-contrib
 
       # 4. Ensure the WinSparkle DLL is in the build context so PyInstaller can bundle it.
       - name: Ensure WinSparkle DLL
@@ -56,12 +51,14 @@ jobs:
           pyinstaller --noconfirm --noconsole --onefile main.py \
                       --name AudioSpectroDemo \
                       --add-data "WinSparkle.dll;." \
+                      --add-data "dsp/checkpoints/best_model.pth;dsp/checkpoints" \
                       --exclude-module tkinter \
                       --noupx \
                       --clean \
                       --hidden-import=PIL._tkinter_finder \
                       --hidden-import=scipy.special.cython_special \
                       --hidden-import=scipy._lib.messagestream \
+                      --hidden-import=matplotlib.backends.backend_qtagg \
                       --hidden-import=unittest.case \
                       --hidden-import=unittest.loader \
                       --hidden-import=unittest.main \
@@ -71,6 +68,7 @@ jobs:
                       --collect-all soundfile \
                       --collect-all librosa \
                       --collect-all scipy \
+                      --collect-all torch \
                       --collect-all ssl \
                       --collect-all certifi
 

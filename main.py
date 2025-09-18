@@ -69,6 +69,8 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QLabel,
     QSlider,
+    QRadioButton,
+    QButtonGroup,
     QMessageBox,
     QWidget,
     QProgressBar,
@@ -483,7 +485,7 @@ class Main(QMainWindow):
             _ws.win_sparkle_set_log_path.argtypes = [ctypes.c_wchar_p]
 
             _ws.win_sparkle_set_appcast_url("https://raw.githubusercontent.com/Lixin-TU/AudioSpectroDemo/main/appcast.xml")
-            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.30")
+            _ws.win_sparkle_set_app_details("UBCO-ISDPRL", "AudioSpectroDemo", "0.2.31")
             _ws.win_sparkle_set_verbosity_level(2)
             _ws.win_sparkle_set_log_path(WINSPARKLE_LOG_PATH)
             _ws.win_sparkle_init()
@@ -686,7 +688,7 @@ exit /b 0
             
             # Add headers to avoid potential blocking
             req = urllib.request.Request(url)
-            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.30')
+            req.add_header('User-Agent', 'AudioSpectroDemo/0.2.31')
 
             print(f"Starting download from: {url}")  # Debug output
             print(f"Downloading to: {new_exe_temp_path}")  # Debug output
@@ -947,24 +949,20 @@ exit /b 0
         self.open_btn.setEnabled(False)
         self.export_checkbox.setEnabled(False)
 
-        # Create progress dialog
-        self.progress = QProgressDialog("Processing audio...", "Cancel", 0, len(files), self)
-        self.progress.setWindowModality(Qt.WindowModal)
-        self.progress.show()
-        QApplication.processEvents()
+        # No extra progress dialog here; viewer overlay handles progress.
+        self.progress = None
 
         # Start audio processing in separate thread
         self.audio_processor = AudioProcessor(files)
         self.audio_processor.progress_updated.connect(self.on_audio_progress)
         self.audio_processor.processing_complete.connect(self.on_audio_complete)
         self.audio_processor.processing_error.connect(self.on_audio_error)
-        self.progress.canceled.connect(self.cancel_processing)
+        # No progress dialog to cancel; keep processing responsive via overlay later.
         self.audio_processor.start()
 
     def on_audio_progress(self, value):
-        if hasattr(self, 'progress'):
-            self.progress.setValue(value)
-            QApplication.processEvents()
+        # No separate progress dialog update needed.
+        pass
 
     def cancel_processing(self):
         if self.audio_processor and self.audio_processor.isRunning():
@@ -976,11 +974,7 @@ exit /b 0
         # Re-enable UI
         self.open_btn.setEnabled(True)
         self.export_checkbox.setEnabled(True)
-        prog = getattr(self, 'progress', None)
-        if prog is not None:
-            prog.close()
-            # keep the attribute but clear it to avoid double‑deletion issues
-            self.progress = None
+        # No separate progress dialog to close.
 
     def on_audio_error(self, error_msg):
         self.cleanup_processing()
@@ -1033,7 +1027,7 @@ exit /b 0
             # Spectrogram subplot (bottom 70% of the figure)
             ax2 = fig.add_subplot(2, 1, 2, sharex=ax1)  # Share x-axis with waveform
             # Flip the spectrogram vertically for correct orientation with low frequencies at bottom
-            ax2.imshow(np.flipud(rgb), aspect='auto', extent=[0, duration_min, 0, MAX_FREQ], origin='upper')
+            ax2.imshow(np.flipud(rgb), aspect='auto', extent=(0.0, duration_min, 0.0, MAX_FREQ), origin='upper')
             ax2.set_xlabel("Time (min)", fontsize=3)
             ax2.set_ylabel("Frequency (kHz)", fontsize=3)
             freqs=[0,2000,4000,6000,10000,12000,14000,16000]
@@ -1116,11 +1110,11 @@ exit /b 0
 
         main_layout.addLayout(btn_layout)
 
-        # Analysis options (same as before)
+        # Analysis options
         analysis_options_layout = QHBoxLayout()
         
         remove_pulse_btn = QPushButton("Remove Pulse")
-        remove_pulse_btn.setFixedSize(100, 30)
+        remove_pulse_btn.setFixedSize(140, 34)
         remove_pulse_btn.setStyleSheet(
             "QPushButton {"
             "    background-color: #4CAF50;"
@@ -1136,10 +1130,15 @@ exit /b 0
             "QPushButton:pressed {"
             "    background-color: #388E3C;"
             "}"
+            "QPushButton:disabled {"
+            "    background-color: #A5D6A7;"
+            "    color: rgba(255,255,255,0.7);"
+            "    border-color: rgba(255,255,255,0.5);"
+            "}"
         )
         
         anomaly_detection_btn = QPushButton("Anomaly Detection")
-        anomaly_detection_btn.setFixedSize(120, 30)
+        anomaly_detection_btn.setFixedSize(140, 34)
         anomaly_detection_btn.setEnabled(True)  # Enable the button
         anomaly_detection_btn.setStyleSheet(
             "QPushButton {"
@@ -1156,21 +1155,51 @@ exit /b 0
             "QPushButton:pressed {"
             "    background-color: #1976D2;"
             "}"
-        )
-        
-        ai_anomaly_btn = QPushButton("AI Anomaly Detection")
-        ai_anomaly_btn.setFixedSize(140, 30)
-        ai_anomaly_btn.setEnabled(False)
-        ai_anomaly_btn.setStyleSheet(
-            "QPushButton {"
-            "    background-color: #CCCCCC;"
-            "    color: #666666;"
-            "    border: 1px solid #999999;"
-            "    border-radius: 15px;"
-            "    font-size: 8px;"
+            "QPushButton:disabled {"
+            "    background-color: #90CAF9;"
+            "    color: rgba(255,255,255,0.7);"
+            "    border-color: rgba(255,255,255,0.5);"
             "}"
         )
         
+        ai_anomaly_btn = QPushButton("AI Anomaly Detection")
+        ai_anomaly_btn.setFixedSize(140, 34)
+        ai_anomaly_btn.setEnabled(True)
+        ai_anomaly_btn.setStyleSheet(
+            "QPushButton {"
+            "    background-color: #9C27B0;"  # Purple to differentiate
+            "    color: white;"
+            "    border: 1px solid white;"
+            "    border-radius: 15px;"
+            "    font-size: 8px;"
+            "    font-weight: bold;"
+            "}"
+            "QPushButton:hover {"
+            "    background-color: #AB47BC;"
+            "}"
+            "QPushButton:pressed {"
+            "    background-color: #7B1FA2;"
+            "}"
+            "QPushButton:disabled {"
+            "    background-color: #CE93D8;"
+            "    color: rgba(255,255,255,0.7);"
+            "    border-color: rgba(255,255,255,0.5);"
+            "}"
+        )
+        
+        # Confidence controls (hidden initially; shown after AI detection)
+        confidence_text_label = QLabel("Confidence:")
+        confidence_high_radio = QRadioButton("High")
+        confidence_low_radio = QRadioButton("Low")
+        confidence_group = QButtonGroup(dialog)
+        confidence_group.addButton(confidence_high_radio)
+        confidence_group.addButton(confidence_low_radio)
+        confidence_high_radio.setChecked(True)
+        # Hidden until AI detection finishes
+        confidence_text_label.setVisible(False)
+        confidence_high_radio.setVisible(False)
+        confidence_low_radio.setVisible(False)
+
         remove_pulse_btn.setVisible(False)
         anomaly_detection_btn.setVisible(False)
         ai_anomaly_btn.setVisible(False)
@@ -1179,11 +1208,17 @@ exit /b 0
         analysis_options_layout.addWidget(remove_pulse_btn)
         analysis_options_layout.addWidget(anomaly_detection_btn)
         analysis_options_layout.addWidget(ai_anomaly_btn)
+        # Confidence UI placed next to AI button
+        analysis_options_layout.addWidget(confidence_text_label)
+        analysis_options_layout.addWidget(confidence_high_radio)
+        analysis_options_layout.addWidget(confidence_low_radio)
         analysis_options_layout.addStretch(1)
         
         main_layout.addLayout(analysis_options_layout)
         
         options_visible = False
+        ai_controls_visible = False
+        gain_controls_hidden_permanently = False
 
         def toggle_analysis_options():
             nonlocal options_visible
@@ -1193,12 +1228,36 @@ exit /b 0
                 remove_pulse_btn.setVisible(True)
                 anomaly_detection_btn.setVisible(True)
                 ai_anomaly_btn.setVisible(True)
+                # Show confidence controls only after AI detection has been run
+                confidence_text_label.setVisible(ai_controls_visible)
+                confidence_high_radio.setVisible(ai_controls_visible)
+                confidence_low_radio.setVisible(ai_controls_visible)
                 analysis_btn.setText("Close")
+                # Permanently hide gain controls after first Analysis click
+                nonlocal gain_controls_hidden_permanently
+                if not gain_controls_hidden_permanently:
+                    gain_label.setVisible(False)
+                    gain_slider.setVisible(False)
+                    gain_value.setVisible(False)
+                    gain_controls_hidden_permanently = True
             else:
                 remove_pulse_btn.setVisible(False)
                 anomaly_detection_btn.setVisible(False)
                 ai_anomaly_btn.setVisible(False)
+                confidence_text_label.setVisible(False)
+                confidence_high_radio.setVisible(False)
+                confidence_low_radio.setVisible(False)
                 analysis_btn.setText("Analysis")
+                # Do not re-show gain controls (only initial UI shows them)
+
+        # Helper to dim non-active buttons during processing
+        def _dim_non_active(active_btn: QPushButton):
+            for b in (remove_pulse_btn, anomaly_detection_btn, ai_anomaly_btn):
+                b.setEnabled(b is active_btn)
+
+        def _restore_buttons():
+            for b in (remove_pulse_btn, anomaly_detection_btn, ai_anomaly_btn):
+                b.setEnabled(True)
 
         analysis_btn.clicked.connect(toggle_analysis_options)
 
@@ -1206,162 +1265,137 @@ exit /b 0
             try:
                 from dsp.remove_pulse import process_remove_pulse
                 fp, img = spectrogram_data
-                print(f"Running Harmonic Extraction on: {os.path.basename(fp)}")
-                
-                # Show processing overlay
                 self.loading_overlay.show_loading("Processing harmonic extraction...")
                 QApplication.processEvents()
-                
-                # Process the audio
+                _dim_non_active(remove_pulse_btn)
+
                 result = process_remove_pulse(fp)
-                
                 if result['status'] == 'success':
-                    # Update viewer with processed audio
                     processed_data = {
                         'file_path': fp,
                         'audio_data': result['processed_audio'],
                         'sample_rate': result['sample_rate'],
-                        'spectrogram': None,  # Will be generated in update_viewer_display
+                        'spectrogram': None,
                         'duration_min': len(result['processed_audio']) / result['sample_rate'] / 60.0,
                         'is_processed': True,
-                        'processing_info': {
-                            'method': 'Harmonic Extraction'
-                        }
+                        'processing_info': {'method': 'Harmonic Extraction'}
                     }
-                    
-                    # Generate new spectrogram for processed audio
                     y_processed = result['processed_audio']
                     sr = result['sample_rate']
-                    
                     self.loading_overlay.update_progress(50, "Generating processed spectrogram...")
                     QApplication.processEvents()
-                    
-                    n_mels = 256
-                    hop_length = 512
-                    n_fft = 2048
-                    
-                    mel_spec = librosa.feature.melspectrogram(
-                        y=y_processed, 
-                        sr=sr, 
-                        n_mels=n_mels,
-                        n_fft=n_fft,
-                        hop_length=hop_length,
-                        fmin=MIN_FREQ,
-                        fmax=MAX_FREQ
-                    )
-                    
-                    mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
-                    processed_data['spectrogram'] = mel_spec_db
-                    
+                    n_mels = 256; hop_length = 512; n_fft = 2048
+                    mel_spec = librosa.feature.melspectrogram(y=y_processed, sr=sr, n_mels=n_mels, n_fft=n_fft, hop_length=hop_length, fmin=MIN_FREQ, fmax=MAX_FREQ)
+                    processed_data['spectrogram'] = librosa.power_to_db(mel_spec, ref=np.max)
                     self.loading_overlay.update_progress(90, "Finalizing...")
                     QApplication.processEvents()
-                    
-                    # Update the display with processed data
                     update_viewer_display(processed_data)
-                    
-                    self.loading_overlay.hide_loading()
-                    
-                    # Show processing results
-                    info_msg = (
-                        f"Harmonic extraction completed!\n\n"
-                        f"The viewer now shows the processed audio with harmonic components only."
-                    )
-                    QMessageBox.information(dialog, "Harmonic Extraction Complete", info_msg)
                 else:
-                    self.loading_overlay.hide_loading()
                     QMessageBox.critical(dialog, "Processing Error", f"Error: {result['error_message']}")
-                    
             except ImportError:
-                self.loading_overlay.hide_loading()
-                print("Remove Pulse module not found")
                 QMessageBox.warning(dialog, "Module Not Found", "Remove Pulse module not found in dsp folder.")
             except Exception as e:
-                self.loading_overlay.hide_loading()
-                print(f"Error in Harmonic Extraction: {e}")
                 QMessageBox.critical(dialog, "Error", f"Error in Harmonic Extraction:\n{str(e)}")
+            finally:
+                self.loading_overlay.hide_loading(); _restore_buttons()
 
         def run_anomaly_detection(spectrogram_data):
             try:
-                # Debug: Check if the module exists
-                import sys
-                import os
-                print(f"Python path: {sys.path}")
-                print(f"Current working directory: {os.getcwd()}")
-                print(f"Looking for module at: {os.path.join(os.getcwd(), 'dsp', 'anomaly_detection.py')}")
-                print(f"Module exists: {os.path.exists(os.path.join(os.getcwd(), 'dsp', 'anomaly_detection.py'))}")
-                print(f"__init__.py exists: {os.path.exists(os.path.join(os.getcwd(), 'dsp', '__init__.py'))}")
-                
                 from dsp.anomaly_detection import process_anomaly_detection
                 fp, img = spectrogram_data
-                print(f"Running Anomaly Detection on: {os.path.basename(fp)}")
-                
-                # Show processing overlay
                 self.loading_overlay.show_loading("Processing anomaly detection...")
                 QApplication.processEvents()
-                
-                # Get current spectrogram from cache if available
+                _dim_non_active(anomaly_detection_btn)
                 cached_data = self.audio_cache.get(fp)
                 mel_spec = cached_data['spectrogram'] if cached_data else None
-                
-                # Process anomaly detection
                 result = process_anomaly_detection(fp, mel_spec)
-                
                 if result['status'] == 'success':
-                    # Update viewer with anomaly detection results
                     processed_data = cached_data.copy() if cached_data else {
-                        'file_path': fp,
-                        'audio_data': None,
-                        'sample_rate': None,
-                        'spectrogram': result['spectrogram'],
-                        'duration_min': None
+                        'file_path': fp, 'audio_data': None, 'sample_rate': None,
+                        'spectrogram': result['spectrogram'], 'duration_min': None
                     }
-                    
-                    processed_data.update({
-                        'is_processed': True,
-                        'processing_info': {
-                            'method': 'Anomaly Detection',
-                            'anomaly_results': result
-                        }
-                    })
-                    
+                    processed_data.update({'is_processed': True, 'processing_info': {'method': 'Anomaly Detection', 'anomaly_results': result}})
                     self.loading_overlay.update_progress(90, "Finalizing visualization...")
                     QApplication.processEvents()
-                    
-                    # Update the display with anomaly detection results
                     update_viewer_display(processed_data)
-                    
-                    self.loading_overlay.hide_loading()
-                    
-                    # Show results summary
-                    selected_count = len(result['selected_indices'])
-                    info_msg = (
-                        f"Anomaly Detection completed!\n\n"
-                        f"Found {selected_count} anomalous segments "
-                        f"(top {result['top_percent']}%)\n\n"
-                        f"The spectrogram now highlights detected anomalies."
-                    )
-                    QMessageBox.information(dialog, "Anomaly Detection Complete", info_msg)
                 else:
-                    self.loading_overlay.hide_loading()
                     QMessageBox.critical(dialog, "Processing Error", f"Error: {result['error_message']}")
-                    
             except ImportError as ie:
-                self.loading_overlay.hide_loading()
-                print(f"Import error details: {ie}")
-                print("Anomaly Detection module not found")
                 QMessageBox.warning(dialog, "Module Not Found", f"Anomaly Detection module not found in dsp folder.\nError: {ie}")
             except Exception as e:
-                self.loading_overlay.hide_loading()
-                print(f"Error in Anomaly Detection: {e}")
                 QMessageBox.critical(dialog, "Error", f"Error in Anomaly Detection:\n{str(e)}")
+            finally:
+                self.loading_overlay.hide_loading(); _restore_buttons()
 
-        remove_pulse_btn.clicked.connect(lambda: run_remove_pulse(spectrograms[index]))
-        anomaly_detection_btn.clicked.connect(lambda: run_anomaly_detection(spectrograms[index]))
+        def run_ai_anomaly_detection(spectrogram_data):
+            try:
+                from dsp.ai_anomaly_detection import process_ai_anomaly_detection
+                fp, img = spectrogram_data
+                self.loading_overlay.show_loading("Processing AI anomaly detection...")
+                QApplication.processEvents()
+                _dim_non_active(ai_anomaly_btn)
+                cached_data = self.audio_cache.get(fp)
+
+                def progress_cb(pct: int, msg: str):
+                    try:
+                        if self.loading_overlay.isVisible():
+                            self.loading_overlay.update_progress(int(pct), str(msg)); QApplication.processEvents()
+                    except Exception:
+                        pass
+
+                result = process_ai_anomaly_detection(fp, progress_cb)
+                if result.get('status') == 'success':
+                    processed_data = cached_data.copy() if cached_data else {
+                        'file_path': fp, 'audio_data': None, 'sample_rate': result.get('sample_rate'),
+                        'spectrogram': None, 'duration_min': (result.get('audio_duration') or 0) / 60.0
+                    }
+                    if processed_data.get('spectrogram') is None:
+                        try:
+                            self.loading_overlay.update_progress(88, "Generating spectrogram for display..."); QApplication.processEvents()
+                            y_sr = processed_data.get('sample_rate') or result.get('sample_rate')
+                            if not cached_data:
+                                y_loaded, sr_loaded = librosa.load(fp, sr=y_sr or None, mono=True); y_sr = sr_loaded
+                            else:
+                                y_loaded = cached_data.get('audio_data'); y_sr = cached_data.get('sample_rate') or y_sr
+                            if y_loaded is not None and y_sr:
+                                n_mels = 256; hop_length = 512; n_fft = 2048
+                                mel_spec = librosa.feature.melspectrogram(y=y_loaded, sr=y_sr, n_mels=n_mels, n_fft=n_fft, hop_length=hop_length, fmin=MIN_FREQ, fmax=MAX_FREQ)
+                                processed_data['spectrogram'] = librosa.power_to_db(mel_spec, ref=np.max)
+                                processed_data['sample_rate'] = y_sr
+                                processed_data['duration_min'] = len(y_loaded) / y_sr / 60.0
+                        except Exception:
+                            pass
+                    processed_data.update({'is_processed': True, 'processing_info': {'method': 'AI Anomaly Detection', 'ai_anomaly_results': result}})
+                    self.loading_overlay.update_progress(90, "Finalizing visualization..."); QApplication.processEvents()
+                    update_viewer_display(processed_data)
+                    # Reveal confidence controls if analysis options are open
+                    nonlocal ai_controls_visible
+                    ai_controls_visible = True
+                    if options_visible:
+                        confidence_text_label.setVisible(True)
+                        confidence_high_radio.setVisible(True)
+                        confidence_low_radio.setVisible(True)
+                else:
+                    err = result.get('error_message') or result
+                    QMessageBox.critical(dialog, "Processing Error", f"Error: {err}")
+            except Exception as e:
+                QMessageBox.critical(dialog, "Error", f"Error in AI Anomaly Detection:\n{str(e)}")
+            finally:
+                self.loading_overlay.hide_loading(); _restore_buttons()
+
+        def hide_confidence_controls():
+            confidence_text_label.setVisible(False)
+            confidence_high_radio.setVisible(False)
+            confidence_low_radio.setVisible(False)
+
+        remove_pulse_btn.clicked.connect(lambda: (hide_confidence_controls(), run_remove_pulse(spectrograms[index])) )
+        anomaly_detection_btn.clicked.connect(lambda: (hide_confidence_controls(), run_anomaly_detection(spectrograms[index])) )
+        ai_anomaly_btn.clicked.connect(lambda: run_ai_anomaly_detection(spectrograms[index]))
 
         # Add gain control
         gain_layout = QHBoxLayout()
         gain_label = QLabel("Spectrogram gain (dB):")
-        gain_slider = QSlider(Qt.Horizontal)
+        gain_slider = QSlider(Qt.Orientation.Horizontal)
         gain_slider.setRange(0, 40)
         gain_slider.setValue(0)
         gain_value = QLabel("0 dB")
@@ -1372,6 +1406,7 @@ exit /b 0
 
         index = 0
         current_processor = None
+        current_display_result = None
         
         # Show dialog immediately
         dialog.show()
@@ -1439,7 +1474,7 @@ exit /b 0
                 except Exception as e:
                     print(f"Error updating display: {e}")
                     self.loading_overlay.hide_loading()
-                    QMessageBox.critical(dialog, "Error updating display:\n{error_msg}")
+                    QMessageBox.critical(dialog, "Error", f"Error updating display:\n{e}")
                     # Re-enable buttons even on error
                     prev_btn.setEnabled(idx > 0)
                     next_btn.setEnabled(idx < len(spectrograms) - 1)
@@ -1521,7 +1556,7 @@ exit /b 0
                     mel_spec_display,
                     aspect='auto',
                     origin='lower',
-                    extent=[0, spec_duration_min, 0, MAX_FREQ],
+                    extent=(0.0, spec_duration_min, 0.0, MAX_FREQ),
                     cmap=cmap
                 )
                 
@@ -1554,6 +1589,93 @@ exit /b 0
                                    f"", 
                                    color='orange', fontsize=10, ha='left', va='top',
                                    bbox=dict(facecolor='black', alpha=0.5, edgecolor='none', boxstyle='round,pad=0.2'))
+
+                # Add AI anomaly detection overlays if available (independent path)
+                if is_processed and processing_info.get('method') == 'AI Anomaly Detection':
+                    ai_results = processing_info.get('ai_anomaly_results', {})
+                    events = ai_results.get('anomaly_events', [])
+                    if events and sr:
+                        # Apply confidence threshold from radios: High=0.80, Low=0.75
+                        threshold = 0.80 if confidence_high_radio.isChecked() else 0.75
+                        filtered = [e for e in events if float(e.get('probability', 0)) >= threshold]
+
+                        # De-dup per class within 5 seconds based on start_time, keep max probability
+                        def dedup_by_class(evts, window_sec=5.0):
+                            by_label = {}
+                            for e in evts:
+                                lbl = str(e.get('label', 'Anomaly')).lower()
+                                by_label.setdefault(lbl, []).append(e)
+                            kept = []
+                            for lbl, lst in by_label.items():
+                                lst.sort(key=lambda x: float(x.get('start_time', 0.0)))
+                                group = []
+                                for e in lst:
+                                    if not group:
+                                        group = [e]
+                                        continue
+                                    if float(e.get('start_time', 0.0)) - float(group[-1].get('start_time', 0.0)) <= window_sec:
+                                        group.append(e)
+                                    else:
+                                        kept.append(max(group, key=lambda x: float(x.get('probability', 0.0))))
+                                        group = [e]
+                                if group:
+                                    kept.append(max(group, key=lambda x: float(x.get('probability', 0.0))))
+                            return kept
+
+                        events_to_draw = dedup_by_class(filtered)
+
+                        # Draw rects and center labels; place labels top-to-bottom and wrap
+                        rects = []
+                        centers = []
+                        for seg in events_to_draw:
+                            start_time_min = float(seg.get('start_time', 0.0)) / 60.0
+                            end_time_min = float(seg.get('end_time', 0.0)) / 60.0
+                            width_time = max(1e-6, end_time_min - start_time_min)
+                            label = seg.get('label', 'Anomaly')
+                            ll = str(label).lower()
+                            if ll == 'leak':
+                                color = 'red'
+                            elif ll == 'pocket':
+                                color = 'yellow'
+                            else:
+                                color = 'orange'
+                            rect = Rectangle((start_time_min, 0), width_time, MAX_FREQ,
+                                             edgecolor=color, facecolor=color,
+                                             alpha=0.35, linewidth=0.5)
+                            ax2.add_patch(rect)
+                            rects.append(rect)
+                            centers.append((start_time_min + end_time_min) / 2.0)
+
+                        def fmt_time(t_min: float) -> str:
+                            total_sec = max(0.0, t_min * 60.0)
+                            m = int(total_sec // 60)
+                            s = int(total_sec % 60)
+                            hs = int((total_sec - int(total_sec)) * 100)
+                            return f"{m:02d}:{s:02d}.{hs:02d}"
+
+                        if centers:
+                            centers_map = {}
+                            for seg in events_to_draw:
+                                c = (float(seg.get('start_time', 0.0)) + float(seg.get('end_time', 0.0))) / 2.0 / 60.0
+                                centers_map.setdefault(round(c, 6), []).append(seg)
+                            # Increase rows and spacing to reduce overlap
+                            rows_count = 6
+                            step = 0.12
+                            for i, ct in enumerate(sorted(centers)):
+                                row = i % rows_count
+                                y_frac = max(0.35, 0.95 - row * step)
+                                matching = centers_map.get(round(ct, 6), [])
+                                label_txt = ''
+                                if matching:
+                                    best = max(matching, key=lambda x: float(x.get('probability', 0.0)))
+                                    label_txt = str(best.get('label', '')).title()
+                                # Text color by label
+                                ll = label_txt.lower()
+                                txt_color = 'red' if ll == 'leak' else ('yellow' if ll == 'pocket' else 'white')
+                                ax2.text(ct, MAX_FREQ * y_frac,
+                                         f"{label_txt} {fmt_time(ct)}",
+                                         color=txt_color, fontsize=10, ha='center', va='top',
+                                         bbox=dict(facecolor='black', alpha=0.6, edgecolor='none', boxstyle='round,pad=0.2'))
 
                 # Configure plot appearance
                 font_size = 8
@@ -1590,6 +1712,8 @@ exit /b 0
                 
                 self.figure.tight_layout()
                 self.canvas.draw()
+                nonlocal current_display_result
+                current_display_result = result
                 
             except Exception as e:
                 print(f"Error in update_viewer_display: {e}")
@@ -1610,6 +1734,15 @@ exit /b 0
                     update_viewer_display(cached_data)
         
         gain_slider.valueChanged.connect(update_gain)
+
+        # Redraw on confidence option change using last result
+        def on_confidence_radio_changed(checked: bool):
+            if not checked:
+                return
+            if current_display_result is not None and not self.loading_overlay.isVisible():
+                update_viewer_display(current_display_result)
+        confidence_high_radio.toggled.connect(on_confidence_radio_changed)
+        confidence_low_radio.toggled.connect(on_confidence_radio_changed)
         
         # Load first file immediately after showing dialog
         QTimer.singleShot(50, lambda: update_with_loading(0))

@@ -22,39 +22,38 @@ def process_anomaly_detection(file_path, mel_spectrogram=None):
         dict: Results containing selected segments and visualization data
     """
     try:
-        # Use provided spectrogram or generate from file
+        # Import shared constants for audio processing
+        try:
+            from .mel import TARGET_SR, MIN_FREQ, MAX_FREQ
+        except ImportError:
+            import sys
+            sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from dsp.mel import TARGET_SR, MIN_FREQ, MAX_FREQ
+
+        # Always load waveform for ZCR analysis
+        y, sr = librosa.load(file_path, sr=TARGET_SR, mono=True)
+
+        # Use provided spectrogram or generate from the loaded waveform
         if mel_spectrogram is not None:
             img = mel_spectrogram
-            # Normalize to 0-1 range for processing
             img_norm = img - img.min()
             if img_norm.max() > 0:
                 img_norm = img_norm / img_norm.max()
             img = img_norm
+            # Assume default parameters used elsewhere
+            hop_length = 512
+            n_fft = 2048
         else:
-            # Load and process audio file - fix the import issue
-            try:
-                from .mel import TARGET_SR, MIN_FREQ, MAX_FREQ
-            except ImportError:
-                # Fallback for direct execution
-                import sys
-                import os
-                sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-                from dsp.mel import TARGET_SR, MIN_FREQ, MAX_FREQ
-            
-            y, sr = librosa.load(file_path, sr=TARGET_SR, mono=True)
-            
             n_mels = 256
             hop_length = 512
             n_fft = 2048
-            
+
             mel_spec = librosa.feature.melspectrogram(
-                y=y, sr=sr, n_mels=n_mels, n_fft=n_fft, 
+                y=y, sr=sr, n_mels=n_mels, n_fft=n_fft,
                 hop_length=hop_length, fmin=MIN_FREQ, fmax=MAX_FREQ
             )
-            
             mel_spec_db = librosa.power_to_db(mel_spec, ref=np.max)
             img = mel_spec_db
-            # Normalize to 0-1 range
             img_norm = img - img.min()
             if img_norm.max() > 0:
                 img_norm = img_norm / img_norm.max()
@@ -68,44 +67,36 @@ def process_anomaly_detection(file_path, mel_spectrogram=None):
         segment_width = int(n_frames / (segments / 2 + 0.5))
         step_size = segment_width // 2  # 50% overlap
 
-        # Parameters for central peak handling
-        disable_center = False
-        center_size = 1
+        # Compute Zero-Crossing Rate (ZCR) over frames aligned with spectrogram
+        zcr = librosa.feature.zero_crossing_rate(y=y, frame_length=n_fft, hop_length=hop_length)[0]
+
+        # Align ZCR length to spectrogram frame count
+        if len(zcr) < n_frames:
+            pad_len = n_frames - len(zcr)
+            if len(zcr) > 0:
+                zcr = np.pad(zcr, (0, pad_len), mode='edge')
+            else:
+                zcr = np.zeros(n_frames, dtype=float)
+        elif len(zcr) > n_frames:
+            zcr = zcr[:n_frames]
 
         scores = []
         segment_starts = []
         for i in range(segments):
             start = i * step_size
-            # Ensure we don't go beyond the image bounds
             if start + segment_width > n_frames:
                 start = n_frames - segment_width
-            
             segment_starts.append(start)
-            clip = img[:, start:start + segment_width]
-            
-            # 2D autocorrelation via FFT
-            F = np.fft.fft2(clip)
-            ac = np.fft.ifft2(F * np.conj(F)).real
-            ac = np.fft.fftshift(ac)
-            
-            ac_scored = ac.copy()
-            
-            # Optionally ignore the central peak region
-            if disable_center:
-                cy, cx = ac_scored.shape[0]//2, ac_scored.shape[1]//2
-                half_size = center_size // 2
-                ac_scored[cy-half_size:cy+half_size+1, cx-half_size:cx+half_size+1] = 0
 
-            scores.append(ac_scored.max())
+            seg_vals = zcr[start:start + segment_width]
+            # Use mean ZCR within the segment as the anomaly score
+            scores.append(float(np.mean(seg_vals)))
 
-        # Selection logic: show top 12% only from segments with score >= 328
+        # Selection logic: select top 12% segments by ZCR
         top_percent = 12
         percentile_threshold = np.percentile(scores, 100 - top_percent)
 
-        selected_indices = []
-        for i, score in enumerate(scores):
-            if score >= 328 and score > percentile_threshold:
-                selected_indices.append(i)
+        selected_indices = [i for i, score in enumerate(scores) if score >= percentile_threshold]
 
         return {
             'status': 'success',

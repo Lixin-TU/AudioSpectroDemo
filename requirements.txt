@@ -4,3 +4,6 @@ librosa
 soundfile
 numpy
 matplotlib
+# 
+#
+torch

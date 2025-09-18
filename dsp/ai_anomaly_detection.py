@@ -1,386 +1,299 @@
 """
-AI-based Anomaly Detection Processing Module
+AI-based Anomaly Detection (Supervised)
 
-This module provides AI/ML-based functionality to detect anomalous events 
-in audio signals using machine learning techniques.
+This module integrates the pre-trained CNN+LSTM classifier directly for
+leak/pocket detection without relying on external helper files.
 """
+
+import os
+from typing import Dict, List, Tuple, Optional, Callable
 
 import numpy as np
 import librosa
-from typing import Dict, List, Tuple, Optional
-from sklearn.ensemble import IsolationForest
-from sklearn.preprocessing import StandardScaler
-from sklearn.decomposition import PCA
+
+try:
+    import torch
+    import torch.nn as nn
+    import torch.nn.functional as F
+except Exception as e:  # pragma: no cover
+    torch = None
+    nn = None
+    F = None
 
 
-def process_ai_anomaly_detection(audio_file_path: str) -> dict:
-    """
-    Main function to process audio file using AI-based anomaly detection.
-    
-    Args:
-        audio_file_path (str): Path to the audio file
-        
-    Returns:
-        dict: AI detection results and statistics
-    """
-    print(f"Processing AI Anomaly Detection for: {audio_file_path}")
-    
-    try:
-        # Load audio file
-        y, sr = librosa.load(audio_file_path, sr=None, mono=True)
-        
-        # Extract comprehensive feature set
-        features = extract_ml_features(y, sr)
-        
-        # Apply AI anomaly detection
-        anomaly_scores, anomaly_labels = detect_anomalies_ml(features)
-        
-        # Post-process results
-        anomaly_events = post_process_ai_results(anomaly_labels, anomaly_scores, sr)
-        
-        # Calculate AI-specific metrics
-        anomaly_confidence = calculate_ai_confidence(anomaly_scores, anomaly_labels)
-        feature_importance = analyze_feature_importance(features, anomaly_labels)
-        
-        result = {
-            'status': 'success',
-            'ai_anomalies_detected': len(anomaly_events),
-            'average_confidence': np.mean(anomaly_confidence),
-            'max_confidence': np.max(anomaly_confidence) if len(anomaly_confidence) > 0 else 0,
-            'anomaly_events': anomaly_events,
-            'feature_importance': feature_importance,
-            'model_type': 'isolation_forest',
-            'total_windows_analyzed': len(features),
-            'anomaly_percentage': np.mean(anomaly_labels == -1) * 100,
-            'audio_duration': len(y) / sr,
-            'sample_rate': sr
-        }
-        
-        print(f"AI Anomaly Detection completed: {len(anomaly_events)} events found")
-        return result
-        
-    except Exception as e:
-        return {
-            'status': 'error',
-            'error_message': str(e)
-        }
+class AudioCNNLSTMClassifier(nn.Module):
+    def __init__(self, num_classes=3, input_height=128, input_width=128, dropout_rate=0.3, num_frames=5):
+        super().__init__()
+        self.input_height = input_height
+        self.input_width = input_width
+        self.num_frames = num_frames
+
+        self.conv1 = nn.Conv2d(1, 32, kernel_size=3, stride=1, padding=1)
+        self.bn1 = nn.BatchNorm2d(32)
+        self.pool1 = nn.MaxPool2d(2, 2)
+
+        self.conv2 = nn.Conv2d(32, 64, kernel_size=3, stride=1, padding=1)
+        self.bn2 = nn.BatchNorm2d(64)
+        self.pool2 = nn.MaxPool2d(2, 2)
+
+        self.conv3 = nn.Conv2d(64, 128, kernel_size=3, stride=1, padding=1)
+        self.bn3 = nn.BatchNorm2d(128)
+        self.pool3 = nn.MaxPool2d(2, 2)
+
+        self.conv4 = nn.Conv2d(128, 256, kernel_size=3, stride=1, padding=1)
+        self.bn4 = nn.BatchNorm2d(256)
+        self.pool4 = nn.MaxPool2d(2, 2)
+
+        self.adaptive_pool = nn.AdaptiveAvgPool2d((8, 8))
+
+        self.frame_feature_size = 256 * 8 * 8
+        self.lstm_input_size = self.frame_feature_size
+        self.lstm_hidden_size = 128
+        self.lstm_layers = 2
+
+        self.lstm = nn.LSTM(
+            input_size=self.lstm_input_size,
+            hidden_size=self.lstm_hidden_size,
+            num_layers=self.lstm_layers,
+            batch_first=True,
+            dropout=dropout_rate if self.lstm_layers > 1 else 0,
+            bidirectional=True,
+        )
+
+        self.dropout = nn.Dropout(dropout_rate)
+        self.fc1 = nn.Linear(self.lstm_hidden_size * 2, 256)
+        self.fc2 = nn.Linear(256, 128)
+        self.fc3 = nn.Linear(128, num_classes)
+
+    def forward(self, x):
+        batch_size = x.size(0)
+        frame_features = []
+        for i in range(x.size(1)):
+            frame = x[:, i, :, :, :]
+            if frame.shape[-2:] != (self.input_height, self.input_width):
+                frame = F.interpolate(frame, size=(self.input_height, self.input_width), mode='bilinear', align_corners=False)
+            f = self.pool1(F.relu(self.bn1(self.conv1(frame))))
+            f = self.pool2(F.relu(self.bn2(self.conv2(f))))
+            f = self.pool3(F.relu(self.bn3(self.conv3(f))))
+            f = self.pool4(F.relu(self.bn4(self.conv4(f))))
+            f = self.adaptive_pool(f)
+            f = f.view(batch_size, -1)
+            frame_features.append(f)
+        lstm_input = torch.stack(frame_features, dim=1)
+        lstm_out, _ = self.lstm(lstm_input)
+        x = lstm_out[:, -1, :]
+        x = F.relu(self.fc1(x))
+        x = self.dropout(x)
+        x = F.relu(self.fc2(x))
+        x = self.dropout(x)
+        x = self.fc3(x)
+        return x
 
 
-def extract_ml_features(audio: np.ndarray, sample_rate: int, 
-                       window_size: float = 2.0, hop_size: float = 1.0) -> np.ndarray:
-    """
-    Extract comprehensive feature set suitable for ML anomaly detection.
-    
-    Args:
-        audio: Audio signal array
-        sample_rate: Sample rate
-        window_size: Analysis window size in seconds
-        hop_size: Hop size between windows in seconds
-        
-    Returns:
-        np.ndarray: Feature matrix (n_windows, n_features)
-    """
-    window_samples = int(window_size * sample_rate)
-    hop_samples = int(hop_size * sample_rate)
-    
-    features_list = []
-    
-    for i in range(0, len(audio) - window_samples, hop_samples):
-        window = audio[i:i + window_samples]
-        
-        # Time-domain features
-        time_features = extract_time_domain_features(window)
-        
-        # Frequency-domain features
-        freq_features = extract_frequency_domain_features(window, sample_rate)
-        
-        # Spectral features
-        spectral_features = extract_spectral_features(window, sample_rate)
-        
-        # Combine all features
-        window_features = np.concatenate([time_features, freq_features, spectral_features])
-        features_list.append(window_features)
-    
-    return np.array(features_list)
-
-
-def extract_time_domain_features(window: np.ndarray) -> np.ndarray:
-    """Extract time-domain features from audio window."""
-    features = []
-    
-    # Basic statistics
-    features.extend([
-        np.mean(window),
-        np.std(window),
-        np.var(window),
-        np.max(np.abs(window)),
-        np.min(window),
-        np.max(window)
-    ])
-    
-    # Energy features
-    features.extend([
-        np.sum(window ** 2),  # Total energy
-        np.mean(window ** 2), # Average power
-        np.sqrt(np.mean(window ** 2))  # RMS
-    ])
-    
-    # Higher-order statistics
-    features.extend([
-        float(np.abs(np.mean(window ** 3))),  # Skewness approximation
-        float(np.mean(window ** 4)),          # Kurtosis approximation
-    ])
-    
-    # Zero crossing rate
-    zero_crossings = np.sum(np.diff(np.signbit(window)))
-    features.append(zero_crossings / len(window))
-    
-    return np.array(features)
-
-
-def extract_frequency_domain_features(window: np.ndarray, sample_rate: int) -> np.ndarray:
-    """Extract frequency-domain features from audio window."""
-    # Compute FFT
-    fft = np.fft.fft(window)
-    magnitude = np.abs(fft[:len(fft)//2])
-    frequencies = np.fft.fftfreq(len(window), 1/sample_rate)[:len(fft)//2]
-    
-    features = []
-    
-    # Spectral statistics
-    features.extend([
-        np.mean(magnitude),
-        np.std(magnitude),
-        np.max(magnitude),
-        np.sum(magnitude)
-    ])
-    
-    # Spectral centroid
-    if np.sum(magnitude) > 0:
-        spectral_centroid = np.sum(frequencies * magnitude) / np.sum(magnitude)
-    else:
-        spectral_centroid = 0
-    features.append(spectral_centroid)
-    
-    # Spectral spread
-    if np.sum(magnitude) > 0:
-        spectral_spread = np.sqrt(np.sum(((frequencies - spectral_centroid) ** 2) * magnitude) / np.sum(magnitude))
-    else:
-        spectral_spread = 0
-    features.append(spectral_spread)
-    
-    # Frequency band energies
-    freq_bands = [(0, 1000), (1000, 5000), (5000, 10000), (10000, sample_rate//2)]
-    for low, high in freq_bands:
-        band_mask = (frequencies >= low) & (frequencies < high)
-        band_energy = np.sum(magnitude[band_mask] ** 2)
-        features.append(band_energy)
-    
-    return np.array(features)
-
-
-def extract_spectral_features(window: np.ndarray, sample_rate: int) -> np.ndarray:
-    """Extract advanced spectral features using librosa."""
-    features = []
-    
-    try:
-        # Mel-frequency cepstral coefficients
-        mfccs = librosa.feature.mfcc(y=window, sr=sample_rate, n_mfcc=13)
-        features.extend(np.mean(mfccs, axis=1))
-        features.extend(np.std(mfccs, axis=1))
-        
-        # Chroma features
-        chroma = librosa.feature.chroma_stft(y=window, sr=sample_rate)
-        features.extend(np.mean(chroma, axis=1))
-        
-        # Spectral contrast
-        contrast = librosa.feature.spectral_contrast(y=window, sr=sample_rate)
-        features.extend(np.mean(contrast, axis=1))
-        
-    except Exception as e:
-        # If librosa features fail, add zeros
-        print(f"Warning: Could not extract some spectral features: {e}")
-        features.extend([0] * 40)  # Approximate number of expected features
-    
-    return np.array(features)
-
-
-def detect_anomalies_ml(features: np.ndarray, contamination: float = 0.1) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Apply machine learning anomaly detection to features.
-    
-    Args:
-        features: Feature matrix
-        contamination: Expected fraction of anomalies
-        
-    Returns:
-        Tuple of (anomaly_scores, anomaly_labels)
-    """
-    # Handle edge cases
-    if len(features) == 0:
-        return np.array([]), np.array([])
-    
-    if len(features) < 10:
-        # Too few samples for ML, mark all as normal
-        return np.zeros(len(features)), np.ones(len(features))
-    
-    # Standardize features
-    scaler = StandardScaler()
-    features_scaled = scaler.fit_transform(features)
-    
-    # Apply PCA for dimensionality reduction if needed
-    if features_scaled.shape[1] > 20:
-        pca = PCA(n_components=min(20, features_scaled.shape[0] - 1))
-        features_scaled = pca.fit_transform(features_scaled)
-    
-    # Apply Isolation Forest
-    iso_forest = IsolationForest(
-        contamination=contamination,
-        random_state=42,
-        n_estimators=100
-    )
-    
-    anomaly_labels = iso_forest.fit_predict(features_scaled)
-    anomaly_scores = iso_forest.score_samples(features_scaled)
-    
-    return anomaly_scores, anomaly_labels
-
-
-def post_process_ai_results(labels: np.ndarray, scores: np.ndarray, 
-                           sample_rate: int, window_hop: float = 1.0) -> List[Dict]:
-    """
-    Post-process AI anomaly detection results into events.
-    
-    Args:
-        labels: Anomaly labels (-1 for anomaly, 1 for normal)
-        scores: Anomaly scores (lower is more anomalous)
-        sample_rate: Audio sample rate
-        window_hop: Time between analysis windows
-        
-    Returns:
-        List of anomaly event dictionaries
-    """
-    if len(labels) == 0:
-        return []
-    
-    events = []
-    in_anomaly = False
-    current_event = None
-    
-    for i, (label, score) in enumerate(zip(labels, scores)):
-        time_stamp = i * window_hop
-        
-        if label == -1:  # Anomaly detected
-            if not in_anomaly:
-                # Start new anomaly event
-                current_event = {
-                    'start_time': time_stamp,
-                    'end_time': time_stamp + window_hop,
-                    'type': 'ai_anomaly',
-                    'confidence': 1 - min(max((score + 0.5) / 0.5, 0), 1),  # Normalize score to 0-1
-                    'severity': 'low' if score > -0.2 else 'medium' if score > -0.4 else 'high',
-                    'ai_score': float(score)
-                }
-                in_anomaly = True
-            else:
-                # Extend current event
-                current_event['end_time'] = time_stamp + window_hop
-                # Update confidence to average
-                current_confidence = current_event['confidence']
-                new_confidence = 1 - min(max((score + 0.5) / 0.5, 0), 1)
-                current_event['confidence'] = (current_confidence + new_confidence) / 2
-        else:
-            if in_anomaly:
-                # End current anomaly event
-                events.append(current_event)
-                in_anomaly = False
-                current_event = None
-    
-    # Handle case where anomaly extends to end of audio
-    if in_anomaly and current_event:
-        events.append(current_event)
-    
-    return events
-
-
-def calculate_ai_confidence(scores: np.ndarray, labels: np.ndarray) -> np.ndarray:
-    """Calculate confidence scores for AI predictions."""
-    if len(scores) == 0:
-        return np.array([])
-    
-    # Convert anomaly scores to confidence (lower score = higher confidence for anomalies)
-    confidence = np.zeros_like(scores)
-    anomaly_mask = labels == -1
-    
-    if np.any(anomaly_mask):
-        # For anomalies, confidence based on how negative the score is
-        confidence[anomaly_mask] = 1 - np.clip((scores[anomaly_mask] + 0.5) / 0.5, 0, 1)
-    
-    # For normal samples, confidence based on how positive the score is
-    normal_mask = labels == 1
-    if np.any(normal_mask):
-        confidence[normal_mask] = np.clip((scores[normal_mask] + 0.5) / 0.5, 0, 1)
-    
-    return confidence
-
-
-def analyze_feature_importance(features: np.ndarray, labels: np.ndarray) -> Dict:
-    """
-    Analyze which features are most important for anomaly detection.
-    
-    Args:
-        features: Feature matrix
-        labels: Anomaly labels
-        
-    Returns:
-        Dict with feature importance analysis
-    """
-    if len(features) == 0 or len(np.unique(labels)) < 2:
-        return {'status': 'insufficient_data'}
-    
-    try:
-        # Simple feature importance based on variance between normal and anomalous samples
-        normal_features = features[labels == 1]
-        anomaly_features = features[labels == -1]
-        
-        if len(normal_features) == 0 or len(anomaly_features) == 0:
-            return {'status': 'insufficient_data'}
-        
-        # Calculate mean difference for each feature
-        normal_means = np.mean(normal_features, axis=0)
-        anomaly_means = np.mean(anomaly_features, axis=0)
-        
-        feature_differences = np.abs(normal_means - anomaly_means)
-        feature_importance = feature_differences / (np.std(features, axis=0) + 1e-8)
-        
-        # Get top features
-        top_indices = np.argsort(feature_importance)[-5:][::-1]
-        
-        return {
-            'status': 'success',
-            'top_feature_indices': top_indices.tolist(),
-            'importance_scores': feature_importance[top_indices].tolist(),
-            'total_features': len(feature_importance)
-        }
-        
-    except Exception as e:
-        return {'status': 'error', 'error': str(e)}
-
-
-# Configuration parameters
-AI_ANOMALY_CONFIG = {
-    'window_size': 2.0,             # Analysis window size (seconds)
-    'hop_size': 1.0,                # Hop between windows (seconds)
-    'contamination': 0.1,           # Expected anomaly fraction
-    'n_estimators': 100,            # Number of trees in Isolation Forest
-    'confidence_threshold': 0.7,    # Minimum confidence for reporting
-    'min_event_duration': 0.5,      # Minimum event duration (seconds)
-    'feature_sets': ['time', 'frequency', 'spectral']  # Feature types to use
+# In-module configuration (embedded, no YAML dependency)
+MODEL_CFG = {
+    'num_classes': 3,
+    'num_frames': 5,
+    'input_size': (128, 128),
+    'dropout': 0.3,
+    'sample_rate': 32552,
+    'n_mels': 128,
+    'n_fft': 2048,
+    'window_length': 1.0,  # seconds per frame
+    'frame_hop': 0.2,      # seconds between frames within a sequence
+    'overlap': 0.50,       # sequence stride overlap
+    'threshold': 0.395,    # decision threshold for abnormal classes
 }
 
 
-if __name__ == "__main__":
-    # Test the module
-    test_file = "test_audio.wav"  # Replace with actual test file
-    result = process_ai_anomaly_detection(test_file)
-    print("Test result:", result)
+def _resize_2d_linear(arr: np.ndarray, new_h: int, new_w: int) -> np.ndarray:
+    h, w = arr.shape
+    if h == new_h and w == new_w:
+        return arr
+    # Resize along axis 0
+    row_idx = np.linspace(0, h - 1, new_h)
+    temp = np.empty((new_h, w), dtype=arr.dtype)
+    base_rows = np.arange(h)
+    for j in range(w):
+        temp[:, j] = np.interp(row_idx, base_rows, arr[:, j])
+    # Resize along axis 1
+    col_idx = np.linspace(0, w - 1, new_w)
+    out = np.empty((new_h, new_w), dtype=arr.dtype)
+    base_cols = np.arange(w)
+    for i in range(new_h):
+        out[i, :] = np.interp(col_idx, base_cols, temp[i, :])
+    return out
+
+
+def _extract_mel_window(y: np.ndarray, sr: int, start_sec: float, window_sec: float, n_mels: int, n_fft: int, target_hw: Tuple[int, int]) -> np.ndarray:
+    start = int(start_sec * sr)
+    end = start + int(window_sec * sr)
+    if start < 0:
+        pad_left = -start
+        start = 0
+    else:
+        pad_left = 0
+    if end > len(y):
+        pad_right = end - len(y)
+        end = len(y)
+    else:
+        pad_right = 0
+    segment = y[start:end]
+    if pad_left or pad_right:
+        segment = np.pad(segment, (pad_left, pad_right), mode='constant')
+
+    mel = librosa.feature.melspectrogram(y=segment, sr=sr, n_fft=n_fft, n_mels=n_mels)
+    mel_db = librosa.power_to_db(mel)
+    mel_db = (mel_db - np.mean(mel_db)) / (np.std(mel_db) + 1e-8)
+    # Transpose to (time, freq) before resize to (128,128)
+    feat = mel_db.T.astype(np.float32)
+    feat = _resize_2d_linear(feat, target_hw[0], target_hw[1])  # (time, freq)
+    # Back to (1, H, W) channel-first
+    return feat[np.newaxis, :, :]
+
+
+def _load_model(device: str, checkpoints_dir: str) -> Tuple[AudioCNNLSTMClassifier, str]:
+    model = AudioCNNLSTMClassifier(num_classes=MODEL_CFG['num_classes'], dropout_rate=MODEL_CFG['dropout'], num_frames=MODEL_CFG['num_frames'])
+    ckpt_path = os.path.join(checkpoints_dir, 'best_model.pth')
+    if not os.path.exists(ckpt_path):
+        # Try project root checkpoints
+        alt = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'checkpoints', 'best_model.pth')
+        if os.path.exists(alt):
+            ckpt_path = alt
+        else:
+            raise FileNotFoundError(f"Model checkpoint not found at {ckpt_path}")
+    checkpoint = torch.load(ckpt_path, map_location=device)
+    model.load_state_dict(checkpoint['model_state_dict'])
+    model.eval()
+    model.to(device)
+    return model, ckpt_path
+
+
+def process_ai_anomaly_detection(audio_file_path: str, progress_cb: Optional[Callable[[int, str], None]] = None) -> dict:
+    """Run supervised AI anomaly detection using the embedded model.
+
+    progress_cb: optional callback receiving (percent:int, message:str)
+    """
+    if torch is None:
+        return {'status': 'error', 'error_message': 'PyTorch is not available. Please install torch.'}
+
+    try:
+        if progress_cb:
+            progress_cb(5, 'Loading audio...')
+        y, sr_in = librosa.load(audio_file_path, sr=None, mono=True)
+        target_sr = MODEL_CFG['sample_rate']
+        if sr_in != target_sr:
+            if progress_cb:
+                progress_cb(8, 'Resampling audio...')
+            y = librosa.resample(y, orig_sr=sr_in, target_sr=target_sr)
+        sr = target_sr
+
+        device = 'cuda' if torch.cuda.is_available() else 'cpu'
+        checkpoints_dir = os.path.join(os.path.dirname(__file__), 'checkpoints')
+        if progress_cb:
+            progress_cb(12, f'Loading model on {device}...')
+        model, model_path = _load_model(device, checkpoints_dir)
+        if progress_cb:
+            progress_cb(25, 'Model loaded. Preparing windows...')
+
+        window_len = MODEL_CFG['window_length']
+        step = window_len * (1.0 - MODEL_CFG['overlap'])  # e.g. 0.5s
+        frame_hop = MODEL_CFG['frame_hop']               # 0.2s
+        num_frames = MODEL_CFG['num_frames']             # 5
+        H, W = MODEL_CFG['input_size']
+
+        total_duration = len(y) / sr
+        times = []
+        results = []  # per-sequence predictions
+        t = 0.0
+        class_names = {0: 'Normal', 1: 'Leak', 2: 'Pocket'}
+
+        # Pre-compute number of sequences for progress
+        total_sequences = int(max(0, np.floor((total_duration - window_len) / step) + 1))
+        processed_sequences = 0
+
+        if progress_cb:
+            progress_cb(35, 'Running inference...')
+        while t + window_len <= total_duration + 1e-6:
+            frames = []
+            for k in range(num_frames):
+                start_sec = t + k * frame_hop
+                frames.append(_extract_mel_window(y, sr, start_sec, window_len, MODEL_CFG['n_mels'], MODEL_CFG['n_fft'], (H, W)))
+            # Stack to (num_frames, 1, H, W)
+            seq = np.stack(frames, axis=0)
+            tensor = torch.from_numpy(seq).float().unsqueeze(0).to(device)  # (1, num_frames, 1, H, W)
+            with torch.no_grad():
+                logits = model(tensor)
+                probs = torch.softmax(logits, dim=1).cpu().numpy()[0]
+            pred_idx = int(np.argmax(probs))
+            leak_prob, pocket_prob = float(probs[1]), float(probs[2])
+            results.append({
+                'start_time': t,
+                'end_time': t + window_len,
+                'predicted_class': pred_idx,
+                'normal_prob': float(probs[0]),
+                'leak_prob': leak_prob,
+                'pocket_prob': pocket_prob,
+                'confidence': float(max(leak_prob, pocket_prob)),
+            })
+            times.append(t)
+            t += step
+            processed_sequences += 1
+            if progress_cb and total_sequences > 0 and processed_sequences % max(1, total_sequences // 20) == 0:
+                # Scale 35→85 for inference progress
+                pct = 35 + int(50 * processed_sequences / total_sequences)
+                progress_cb(min(85, pct), f'Inference {processed_sequences}/{total_sequences}...')
+
+        # Collect anomaly segments using threshold
+        if progress_cb:
+            progress_cb(86, 'Post-processing events...')
+        threshold = MODEL_CFG['threshold']
+        raw_segments = []
+        for r in results:
+            if r['predicted_class'] != 0 and r['confidence'] >= threshold:
+                label = class_names[r['predicted_class']]
+                raw_segments.append({'start_time': r['start_time'], 'end_time': r['end_time'], 'label': label, 'probability': r['confidence']})
+
+        # Merge consecutive/overlapping segments per class
+        def merge_segments(segments: List[Dict], max_gap: float = step + 1e-6) -> List[Dict]:
+            if not segments:
+                return []
+            segments = sorted(segments, key=lambda x: (x['label'], x['start_time']))
+            merged: List[Dict] = []
+            cur = segments[0].copy()
+            for s in segments[1:]:
+                if s['label'] == cur['label'] and s['start_time'] <= cur['end_time'] + max_gap:
+                    cur['end_time'] = max(cur['end_time'], s['end_time'])
+                    cur['probability'] = max(cur['probability'], s.get('probability', 0.0))
+                else:
+                    merged.append(cur)
+                    cur = s.copy()
+            merged.append(cur)
+            return merged
+
+        merged_segments = merge_segments(raw_segments)
+        if progress_cb:
+            progress_cb(92, 'Finalizing results...')
+
+        result = {
+            'status': 'success',
+            'anomaly_events': merged_segments,
+            'total_sequences': len(results),
+            'audio_duration': total_duration,
+            'sample_rate': sr,
+            'model_info': {
+                'path': model_path,
+                'device': device,
+                'classes': ['Normal', 'Leak', 'Pocket'],
+                'window_length': window_len,
+                'overlap': MODEL_CFG['overlap'],
+                'num_frames': num_frames,
+            },
+        }
+        if progress_cb:
+            progress_cb(98, 'Done.')
+        return result
+
+    except Exception as e:  # pragma: no cover
+        return {'status': 'error', 'error_message': str(e)}
+

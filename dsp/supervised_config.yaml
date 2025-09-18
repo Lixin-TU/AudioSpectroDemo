@@ -1,0 +1,34 @@
+model:
+  name: "AudioClassifier_CNN_LSTM_3class"
+  num_classes: 3
+  dropout_rate: 0.3
+
+training:
+  batch_size: 16
+  learning_rate: 1e-4
+  epochs: 40
+  validation_split: 0.2
+  patience: 10
+  checkpoint_freq: 5
+
+data:
+  n_mels: 128
+  frames: 128
+  sample_rate: 32552
+  n_fft: 2048
+  window_duration: 1.0    # 1 second window
+  num_frames: 5           # 5 consecutive frames
+  hop_length: 0.2         # 0.2 second hop for consecutive frames
+
+paths:
+  data_path: "../../data"  # Updated to use 1 second clips
+  model_path: "./checkpoints"
+  results_path: "./results"
+  
+augmentation:
+  use_vae: true           # enable VAE augmentation for leak/pocket
+  vae_latent_dim: 64
+  vae_lr: 1e-3
+  vae_steps_per_batch: 1  # quick online training per batch
+  vae_mix_alpha: 0.90     # balanced mix for useful variation
+  vae_augment_prob: 0.15  # moderate augmentation rate

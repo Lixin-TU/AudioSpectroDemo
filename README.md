@@ -13,3 +13,21 @@ python main.py
 ## CI build
 
 Simply `git push` — the workflow in `.github/workflows/windows.yml` produces `AudioSpectroDemo.exe` and attaches it to the run artefacts.
+
+## Requirements
+
+Install with:
+
+```powershell
+python -m pip install -r requirements.txt
+```
+
+Included packages:
+- PySide6 (UI)
+- pyqtgraph (legacy viewer)
+- librosa, soundfile, numpy (audio)
+- matplotlib (spectrogram rendering)
+- torch (AI anomaly detection)
+
+Newly added:
+- torch
